@@ -1,0 +1,200 @@
+# Guide de Configuration des Credentials Multi-Comptes
+
+Ce guide explique comment configurer les credentials pour chaque site web et plateforme sociale.
+
+## 🔑 Structure des Credentials
+
+### Format des variables d'environnement
+```
+{SITE_WEB}_{PLATEFORME}_{CREDENTIAL_TYPE}
+```
+
+Exemples :
+- `STUFFGAMING_FR_TWITTER_API_KEY`
+- `GAMING_COM_FACEBOOK_ACCESS_TOKEN`
+- `FOOTBALL_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID`
+
+## 📋 Credentials Requis par Plateforme
+
+### 🐦 Twitter/X (API v2)
+Pour chaque site, vous devez configurer :
+```env
+{SITE}_TWITTER_API_KEY="your_api_key"
+{SITE}_TWITTER_API_SECRET="your_api_secret"
+{SITE}_TWITTER_ACCESS_TOKEN="your_access_token"
+{SITE}_TWITTER_ACCESS_TOKEN_SECRET="your_access_token_secret"
+{SITE}_TWITTER_BEARER_TOKEN="your_bearer_token"
+```
+
+**Où obtenir :**
+1. Créer une app sur [developer.twitter.com](https://developer.twitter.com)
+2. Générer les clés API et tokens d'accès
+3. Activer les permissions d'écriture
+
+### 📘 Facebook (Graph API)
+```env
+{SITE}_FACEBOOK_APP_ID="your_app_id"
+{SITE}_FACEBOOK_APP_SECRET="your_app_secret"
+{SITE}_FACEBOOK_ACCESS_TOKEN="your_page_access_token"
+{SITE}_FACEBOOK_PAGE_ID="your_page_id"
+```
+
+**Où obtenir :**
+1. Créer une app sur [developers.facebook.com](https://developers.facebook.com)
+2. Ajouter le produit "Pages API"
+3. Générer un Page Access Token (pas User Token !)
+4. Récupérer l'ID de votre page Facebook
+
+### 📸 Instagram Business (Graph API)
+```env
+{SITE}_INSTAGRAM_ACCESS_TOKEN="your_instagram_access_token"
+{SITE}_INSTAGRAM_BUSINESS_ACCOUNT_ID="your_business_account_id"
+# Utilise les mêmes App ID/Secret que Facebook
+```
+
+**Où obtenir :**
+1. Convertir votre compte Instagram en compte Business
+2. Le connecter à une page Facebook
+3. Utiliser la même app Facebook
+4. Récupérer l'Instagram Business Account ID
+
+## 🏢 Configuration par Site
+
+### StuffGaming.fr
+```env
+# Twitter
+STUFFGAMING_FR_TWITTER_API_KEY="..."
+STUFFGAMING_FR_TWITTER_API_SECRET="..."
+STUFFGAMING_FR_TWITTER_ACCESS_TOKEN="..."
+STUFFGAMING_FR_TWITTER_ACCESS_TOKEN_SECRET="..."
+STUFFGAMING_FR_TWITTER_BEARER_TOKEN="..."
+
+# Facebook
+STUFFGAMING_FR_FACEBOOK_APP_ID="..."
+STUFFGAMING_FR_FACEBOOK_APP_SECRET="..."
+STUFFGAMING_FR_FACEBOOK_ACCESS_TOKEN="..."
+STUFFGAMING_FR_FACEBOOK_PAGE_ID="..."
+
+# Instagram
+STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN="..."
+STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID="..."
+```
+
+### Gaming.com
+```env
+# Même structure avec GAMING_COM_...
+```
+
+### Football.com
+```env
+# Même structure avec FOOTBALL_COM_...
+```
+
+## 🧪 Validation des Credentials
+
+### Via API
+```bash
+# Vérifier tous les credentials
+curl http://localhost:8090/credentials
+
+# Vérifier un site spécifique
+curl http://localhost:8090/credentials/stuffgaming.fr/twitter
+
+# Tester la connexion
+curl -X POST "http://localhost:8090/test/credentials" \
+  -d "site_web=stuffgaming.fr&platform=twitter"
+```
+
+### Via Script Python
+```python
+from app.config.credentials import credentials_manager, get_platform_credentials
+from app.models.accounts import SiteWeb
+from app.models.base import PlatformType
+
+# Vérifier si les credentials existent
+has_creds = credentials_manager.has_credentials(
+    SiteWeb.STUFFGAMING,
+    PlatformType.TWITTER
+)
+
+# Récupérer les credentials avec validation
+try:
+    creds = get_platform_credentials(SiteWeb.STUFFGAMING, PlatformType.TWITTER)
+    print(f"Twitter API Key: {creds.api_key[:8]}...")
+except CredentialsError as e:
+    print(f"Erreur: {e}")
+```
+
+## 🔒 Sécurité
+
+### Bonnes pratiques
+1. **Ne jamais commiter les credentials** dans le code
+2. **Utiliser des variables d'environnement** uniquement
+3. **Rotation régulière** des tokens d'accès
+4. **Permissions minimales** pour chaque app
+5. **Monitoring** des usages API
+
+### Variables d'environnement sécurisées
+```bash
+# En production, utiliser des services de secrets
+export STUFFGAMING_FR_TWITTER_API_KEY=$(aws ssm get-parameter --name "/social-publisher/stuffgaming/twitter/api-key" --with-decryption --query Parameter.Value --output text)
+```
+
+### Validation en temps réel
+Le système valide automatiquement :
+- ✅ Présence de tous les champs requis
+- ✅ Format des tokens
+- ✅ Permissions des apps (via tests de connexion)
+
+## 🚨 Dépannage
+
+### Erreurs courantes
+
+#### "Credentials non configurés"
+```bash
+# Vérifier que la variable existe
+echo $STUFFGAMING_FR_TWITTER_API_KEY
+
+# Recharger les variables d'environnement
+source .env
+```
+
+#### "Credentials invalides"
+```bash
+# Tester chaque credential individuellement
+curl http://localhost:8090/credentials/stuffgaming.fr/twitter
+```
+
+#### "Page Access Token expiré"
+Les Page Access Tokens Facebook/Instagram peuvent expirer :
+1. Regénérer via Facebook Developers
+2. Mettre à jour la variable d'environnement
+3. Redémarrer l'application
+
+### Logs de debug
+```python
+import logging
+logging.getLogger('app.config.credentials').setLevel(logging.DEBUG)
+```
+
+## 📊 Monitoring
+
+### Endpoints de santé
+- `GET /credentials` - Statut global
+- `GET /credentials/{site}/{platform}` - Statut spécifique
+- `POST /test/credentials` - Test de connexion
+
+### Métriques à surveiller
+- Taux de succès des authentifications
+- Quotas API utilisés
+- Expirations de tokens
+- Erreurs par site/plateforme
+
+---
+
+## 🎯 Prochaines étapes
+
+1. **Configurer vos credentials** selon ce guide
+2. **Tester via les endpoints** API
+3. **Implémenter les agents de publication** réels
+4. **Mettre en place le monitoring** en production

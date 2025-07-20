@@ -1,0 +1,376 @@
+from langgraph.graph import StateGraph, END
+from typing import TypedDict, List, Dict, Any, Optional
+from app.models.base import PlatformType, TaskStatus, ContentType
+from app.models.content import EnhancedPublicationRequest, PlatformContentConfig, PlatformSpecificResult, \
+    generate_images
+from app.models.platforms import *
+from app.models.accounts import validate_account_exists, AccountValidationError
+from app.services.llm_service import llm_service
+import logging
+import uuid
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+
+class WorkflowState(TypedDict):
+    """État partagé du workflow LangGraph"""
+    request: EnhancedPublicationRequest
+    content_generated: Optional[str]
+    formatted_content: Dict[str, Any]  # {platform_type_key: formatted_content}
+    publication_results: Dict[str, Any]  # {platform_type_key: result}
+    errors: List[str]
+    current_step: str
+    task_id: str
+
+
+class ContentPublisherOrchestrator:
+    """Orchestrateur LangGraph pour la publication multi-plateformes"""
+
+    def __init__(self):
+        self.workflow = self._build_workflow()
+
+    def _build_workflow(self) -> StateGraph:
+        """Construit le graphe LangGraph"""
+        workflow = StateGraph(WorkflowState)
+
+        # Définir les nœuds
+        workflow.add_node("generate_content", self._generate_content_node)
+        workflow.add_node("format_content", self._format_content_node)
+        workflow.add_node("publish_content", self._publish_content_node)
+        workflow.add_node("finalize_results", self._finalize_results_node)
+
+        # Définir les edges
+        workflow.set_entry_point("generate_content")
+        workflow.add_edge("generate_content", "format_content")
+        workflow.add_edge("format_content", "publish_content")
+        workflow.add_edge("publish_content", "finalize_results")
+        workflow.add_edge("finalize_results", END)
+
+        return workflow.compile()
+
+    async def _generate_content_node(self, state: WorkflowState) -> WorkflowState:
+        """Nœud de génération de contenu avec Claude"""
+        logger.info(f"Génération de contenu pour la tâche {state['task_id']}")
+
+        try:
+            request = state["request"]
+
+            # Prompt pour la génération de contenu de base
+            system_prompt = """Tu es un expert en création de contenu pour les réseaux sociaux.
+            Génère un contenu de base qui pourra être adapté pour différentes plateformes (Twitter, Facebook, LinkedIn, Instagram).
+            Le contenu doit être informatif, engageant et facilement adaptable."""
+
+            prompt = f"""
+            Texte source à transformer:
+            {request.texte_source}
+
+            Plateformes cibles: {', '.join(request.plateformes)}
+
+            Génère un contenu de base qui servira de fondation pour l'adaptation sur chaque plateforme.
+            """
+
+            generated_content = await llm_service.generate_content(prompt, system_prompt)
+
+            state["content_generated"] = generated_content
+            state["current_step"] = "content_generated"
+
+            logger.info("Contenu généré avec succès")
+
+        except Exception as e:
+            error_msg = f"Erreur lors de la génération de contenu: {str(e)}"
+            logger.error(error_msg)
+            state["errors"].append(error_msg)
+
+        return state
+
+    async def _format_content_node(self, state: WorkflowState) -> WorkflowState:
+        """Nœud de formatage pour chaque plateforme/type avec validation des comptes"""
+        logger.info(f"Formatage du contenu pour la tâche {state['task_id']}")
+
+        if not state.get("content_generated"):
+            state["errors"].append("Aucun contenu généré à formater")
+            return state
+
+        request = state["request"]
+        base_content = state["content_generated"]
+        formatted_content = {}
+
+        # Formater pour chaque configuration plateforme/type
+        for config in request.platforms_config:
+            try:
+                # Valider que le compte existe
+                account = validate_account_exists(request.site_web, config.platform)
+                logger.info(f"Compte validé: {account.account_name} pour {request.site_web}/{config.platform}")
+
+                # Créer une clé unique pour cette combinaison plateforme/type
+                config_key = f"{config.platform}_{config.content_type}"
+
+                if config.platform == PlatformType.TWITTER:
+                    formatted = await self._format_twitter_content(base_content, config, account)
+                    formatted_content[config_key] = formatted
+
+                elif config.platform == PlatformType.FACEBOOK:
+                    formatted = await self._format_facebook_content(base_content, config, account)
+                    formatted_content[config_key] = formatted
+
+                elif config.platform == PlatformType.LINKEDIN:
+                    formatted = await self._format_linkedin_content(base_content, config, account)
+                    formatted_content[config_key] = formatted
+
+                elif config.platform == PlatformType.INSTAGRAM:
+                    if config.content_type == ContentType.POST:
+                        formatted = await self._format_instagram_post(base_content, config, account)
+                    elif config.content_type == ContentType.STORY:
+                        formatted = await self._format_instagram_story(base_content, config, account)
+                    elif config.content_type == ContentType.CAROUSEL:
+                        formatted = await self._format_instagram_carousel(base_content, config, account)
+                    else:
+                        raise ValueError(f"Type de contenu non supporté pour Instagram: {config.content_type}")
+
+                    formatted_content[config_key] = formatted
+
+                logger.info(
+                    f"Contenu formaté pour {config.platform}_{config.content_type} (compte: {account.account_name})")
+
+            except AccountValidationError as e:
+                error_msg = f"Erreur validation compte {config.platform}: {str(e)}"
+                logger.error(error_msg)
+                state["errors"].append(error_msg)
+            except Exception as e:
+                error_msg = f"Erreur formatage {config.platform}_{config.content_type}: {str(e)}"
+                logger.error(error_msg)
+                state["errors"].append(error_msg)
+
+        state["formatted_content"] = formatted_content
+        state["current_step"] = "content_formatted"
+
+        return state
+
+    async def _publish_content_node(self, state: WorkflowState) -> WorkflowState:
+        """Nœud de publication (simulé pour l'instant)"""
+        logger.info(f"Publication du contenu pour la tâche {state['task_id']}")
+
+        formatted_content = state.get("formatted_content", {})
+        publication_results = {}
+
+        for platform, content in formatted_content.items():
+            try:
+                # Pour l'instant, on simule la publication
+                # Dans la vraie implémentation, ici on appellerait les agents de publication
+                result = await self._simulate_publication(platform, content)
+                publication_results[platform] = result
+
+                logger.info(f"Publication simulée réussie pour {platform}")
+
+            except Exception as e:
+                error_msg = f"Erreur publication {platform}: {str(e)}"
+                logger.error(error_msg)
+                state["errors"].append(error_msg)
+                publication_results[platform] = {"status": "failed", "error": str(e)}
+
+        state["publication_results"] = publication_results
+        state["current_step"] = "content_published"
+
+        return state
+
+    async def _finalize_results_node(self, state: WorkflowState) -> WorkflowState:
+        """Nœud de finalisation des résultats"""
+        logger.info(f"Finalisation des résultats pour la tâche {state['task_id']}")
+
+        state["current_step"] = "completed"
+
+        # Calculer le statut global
+        publication_results = state.get("publication_results", {})
+        has_errors = len(state.get("errors", [])) > 0
+
+        if has_errors or not publication_results:
+            state["current_step"] = "failed"
+
+        return state
+
+    # === Méthodes de formatage avec comptes ===
+
+    async def _format_twitter_content(self, content: str, config: PlatformContentConfig, account) -> TwitterPostOutput:
+        """Formate le contenu pour Twitter"""
+        constraints = {
+            "max_length": "280 caractères",
+            "hashtags": config.hashtags,
+            "mentions": config.mentions,
+            "account": account.account_name
+        }
+
+        formatted = await llm_service.format_content_for_platform(
+            content, "twitter", "post", constraints
+        )
+
+        return TwitterPostOutput(tweet=formatted)
+
+    async def _format_facebook_content(self, content: str, config: PlatformContentConfig,
+                                       account) -> FacebookPostOutput:
+        """Formate le contenu pour Facebook"""
+        constraints = {
+            "lien_source": config.lien_source,
+            "hashtags": config.hashtags,
+            "account": account.account_name
+        }
+
+        formatted = await llm_service.format_content_for_platform(
+            content, "facebook", "post", constraints
+        )
+
+        return FacebookPostOutput(message=formatted)
+
+    async def _format_linkedin_content(self, content: str, config: PlatformContentConfig,
+                                       account) -> LinkedInPostOutput:
+        """Formate le contenu pour LinkedIn"""
+        constraints = {
+            "tone": "professionnel",
+            "lien_source": config.lien_source,
+            "hashtags": config.hashtags,
+            "account": account.account_name
+        }
+
+        formatted = await llm_service.format_content_for_platform(
+            content, "linkedin", "post", constraints
+        )
+
+        return LinkedInPostOutput(contenu=formatted)
+
+    async def _format_instagram_post(self, content: str, config: PlatformContentConfig, account) -> InstagramPostOutput:
+        """Formate le contenu pour Instagram Post"""
+        constraints = {
+            "tone": "décontracté avec émojis",
+            "hashtags": config.hashtags,
+            "mention": config.mentions[0] if config.mentions else None,
+            "account": account.account_name
+        }
+
+        formatted = await llm_service.format_content_for_platform(
+            content, "instagram", "post", constraints
+        )
+
+        return InstagramPostOutput(legende=formatted, hashtags=config.hashtags)
+
+    async def _format_instagram_story(self, content: str, config: PlatformContentConfig,
+                                      account) -> InstagramStoryOutput:
+        """Formate le contenu pour Instagram Story"""
+        constraints = {
+            "max_length": "50 caractères maximum",
+            "style": "très court et percutant",
+            "lien_sticker": config.lien_sticker,
+            "account": account.account_name
+        }
+
+        formatted = await llm_service.format_content_for_platform(
+            content, "instagram", "story", constraints
+        )
+
+        return InstagramStoryOutput(texte_story=formatted[:50])  # Sécurité longueur
+
+    async def _format_instagram_carousel(self, content: str, config: PlatformContentConfig,
+                                         account) -> InstagramCarouselOutput:
+        """Formate le contenu pour Instagram Carousel avec gestion des images"""
+
+        # Gestion des images
+        images_urls = config.images_urls
+        images_generated = False
+
+        if not images_urls:
+            # Pas d'images fournies -> génération automatique
+            nb_slides = config.nb_slides or 5
+            images_urls = generate_images(nb_slides, content[:100])
+            images_generated = True
+            logger.info(f"Images générées automatiquement pour le carrousel: {len(images_urls)} images")
+        else:
+            logger.info(f"Utilisation des images fournies: {len(images_urls)} images")
+
+        constraints = {
+            "nb_slides": config.nb_slides or len(images_urls),
+            "titre_carousel": config.titre_carousel,
+            "hashtags": config.hashtags,
+            "style": "découper en points clés",
+            "account": account.account_name,
+            "images_provided": not images_generated
+        }
+
+        # Prompt spécifique pour carrousel
+        system_prompt = f"""Tu es un expert en carrousels Instagram pour le compte {account.account_name}. 
+        Découpe le contenu en {constraints['nb_slides']} slides maximum.
+
+        IMPORTANT: Réponds UNIQUEMENT avec un JSON valide contenant:
+        {{
+            "slides": ["Texte slide 1", "Texte slide 2", ...],
+            "legende": "Légende pour le carrousel avec émojis et hashtags"
+        }}
+
+        Chaque slide doit être courte et impactante (1-2 phrases max).
+        La légende doit inciter à swiper et inclure les hashtags.
+        {"Images fournies par l'utilisateur." if not images_generated else "Images générées automatiquement."}
+        """
+
+        formatted_json = await llm_service.generate_content(content, system_prompt)
+
+        try:
+            import json
+            parsed = json.loads(formatted_json)
+            return InstagramCarouselOutput(
+                slides=parsed["slides"][:config.nb_slides or 5],
+                legende=parsed["legende"],
+                hashtags=config.hashtags,
+                images_urls=images_urls,
+                images_generated=images_generated
+            )
+        except Exception as e:
+            logger.warning(f"Erreur parsing JSON carrousel: {e}. Utilisation du fallback.")
+            # Fallback si le JSON n'est pas valide
+            slides = [f"Point {i + 1}: {content[:100]}..." for i in range(config.nb_slides or 3)]
+            return InstagramCarouselOutput(
+                slides=slides,
+                legende=f"📱 Swipe pour découvrir → {' '.join(config.hashtags or [])}",
+                hashtags=config.hashtags,
+                images_urls=images_urls,
+                images_generated=images_generated
+            )
+
+    async def _simulate_publication(self, platform: str, content: Any) -> Dict[str, Any]:
+        """Simule la publication (à remplacer par les vrais agents)"""
+        # Simulation d'une publication réussie
+        return {
+            "status": "success",
+            "post_id": f"fake_id_{uuid.uuid4().hex[:8]}",
+            "post_url": f"https://{platform}.com/fake_post",
+            "published_at": datetime.now().isoformat()
+        }
+
+    async def execute_workflow(self, request: EnhancedPublicationRequest) -> WorkflowState:
+        """Exécute le workflow complet"""
+        task_id = str(uuid.uuid4())
+
+        initial_state: WorkflowState = {
+            "request": request,
+            "content_generated": None,
+            "formatted_content": {},
+            "publication_results": {},
+            "errors": [],
+            "current_step": "initialized",
+            "task_id": task_id
+        }
+
+        logger.info(f"Démarrage du workflow {task_id}")
+        logger.info(f"Configurations: {[(c.platform, c.content_type) for c in request.platforms_config]}")
+
+        try:
+            final_state = await self.workflow.ainvoke(initial_state)
+            logger.info(f"Workflow {task_id} terminé avec statut: {final_state['current_step']}")
+            return final_state
+
+        except Exception as e:
+            logger.error(f"Erreur dans le workflow {task_id}: {str(e)}")
+            initial_state["errors"].append(f"Erreur workflow: {str(e)}")
+            initial_state["current_step"] = "failed"
+            return initial_state
+
+
+# Instance globale de l'orchestrateur
+orchestrator = ContentPublisherOrchestrator()

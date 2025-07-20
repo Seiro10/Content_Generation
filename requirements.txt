@@ -1,0 +1,36 @@
+# API Framework
+fastapi==0.104.1
+uvicorn==0.24.0
+
+# LangGraph & LangChain
+langgraph==0.1.14
+langchain==0.1.0
+langchain-anthropic==0.1.0
+
+# Data Validation
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Async Task Queue
+celery==5.3.4
+redis==5.0.1
+flower==2.0.1
+
+# Database
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
+alembic==1.13.1
+
+# HTTP Client for APIs
+httpx==0.25.2
+aiohttp==3.9.1
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# Development
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# Production
+gunicorn==21.2.0
