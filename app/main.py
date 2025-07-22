@@ -4,10 +4,10 @@ from contextlib import asynccontextmanager
 import logging
 import uuid
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional, List
 
 from app.config.settings import settings
-from app.models.base import TaskStatus, PublicationResult
+from app.models.base import TaskStatus, PublicationResult, PlatformType
 from app.models.content import SimplePublicationRequest, EnhancedPublicationRequest, PublicationRequestExamples
 from app.models.accounts import account_mapping, SiteWeb, AccountValidationError
 from app.config.credentials import credentials_manager, CredentialsError
@@ -365,7 +365,7 @@ async def test_credentials_connection(site_web: SiteWeb, platform: str):
         raise HTTPException(status_code=500, detail=f"Erreur lors du test: {str(e)}")
 
 
-@app.accounts
+@app.get("/accounts")
 async def list_all_accounts():
     """
     Liste tous les comptes configurés par site web et plateforme

@@ -24,11 +24,22 @@ log_error() {
     echo -e "${RED}[ENTRYPOINT]${NC} $1"
 }
 
-# Function to wait for Redis
+# Function to wait for Redis using Python
 wait_for_redis() {
     log_info "Waiting for Redis to be ready..."
 
-    while ! redis-cli -h social-media-redis -p 6379 ping > /dev/null 2>&1; do
+    while ! python3 -c "
+import redis
+import sys
+try:
+    r = redis.Redis(host='social-media-redis', port=6379, db=1, socket_timeout=5, socket_connect_timeout=5)
+    r.ping()
+    print('Redis is ready')
+    sys.exit(0)
+except Exception as e:
+    print(f'Redis not ready: {e}')
+    sys.exit(1)
+" > /dev/null 2>&1; do
         log_warn "Redis not ready, waiting 2 seconds..."
         sleep 2
     done
@@ -36,11 +47,28 @@ wait_for_redis() {
     log_info "✅ Redis is ready!"
 }
 
-# Function to wait for PostgreSQL
+# Function to wait for PostgreSQL using Python (simplified)
 wait_for_postgres() {
     log_info "Waiting for PostgreSQL to be ready..."
 
-    while ! pg_isready -h social-media-db -p 5432 -U ${POSTGRES_USER:-social_media_user} > /dev/null 2>&1; do
+    # Simple approach - just check if PostgreSQL is accepting connections
+    while ! python3 -c "
+import socket
+import sys
+try:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(5)
+    result = sock.connect_ex(('social-media-db', 5432))
+    sock.close()
+    if result == 0:
+        print('PostgreSQL is ready')
+        sys.exit(0)
+    else:
+        sys.exit(1)
+except Exception as e:
+    print(f'PostgreSQL not ready: {e}')
+    sys.exit(1)
+" > /dev/null 2>&1; do
         log_warn "PostgreSQL not ready, waiting 2 seconds..."
         sleep 2
     done
