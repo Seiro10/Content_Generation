@@ -1,13 +1,13 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 import uuid
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional, List
 
 from app.config.settings import settings
-from app.models.base import TaskStatus, PublicationResult
+from app.models.base import TaskStatus, PublicationResult, PlatformType
 from app.models.content import SimplePublicationRequest, EnhancedPublicationRequest, PublicationRequestExamples
 from app.models.accounts import account_mapping, SiteWeb, AccountValidationError
 from app.config.credentials import credentials_manager, CredentialsError
@@ -305,49 +305,53 @@ async def check_credentials(site_web: SiteWeb, platform: str):
 
 
 @app.post("/test/credentials")
-async def test_credentials_connection(site_web: SiteWeb, platform: str):
+async def test_credentials_connection(
+    site_web: str = Form(...),
+    platform: str = Form(...)
+):
     """
     Teste la connexion aux APIs avec les credentials
-    (simulation pour l'instant, sera remplacé par de vrais appels API)
     """
     try:
         from app.models.base import PlatformType
         from app.config.credentials import get_platform_credentials
+        from app.models.accounts import SiteWeb
 
-        platform_enum = PlatformType(platform)
+        # Valider les paramètres
+        try:
+            site_enum = SiteWeb(site_web)
+            platform_enum = PlatformType(platform)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Paramètre invalide: {str(e)}")
 
         # Récupérer et valider les credentials
-        creds = get_platform_credentials(site_web, platform_enum)
+        creds = get_platform_credentials(site_enum, platform_enum)
 
-        # Simulation d'un test de connexion
-        # Dans la vraie implémentation, on ferait un appel API minimal
+        # Simulation d'un test de connexion réussi
         test_results = {
             "site_web": site_web,
             "platform": platform,
             "credentials_valid": True,
             "connection_test": "simulated_success",
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "endpoint_tested": "",
+            "api_version": "",
+            "additional_info": ""
         }
 
-        # Simulation différente par plateforme
+        # Détails spécifiques par plateforme (structure plate)
         if platform_enum == PlatformType.TWITTER:
-            test_results["test_details"] = {
-                "endpoint_tested": "GET /2/users/me",
-                "api_version": "v2",
-                "rate_limit_remaining": "simulated_900/900"
-            }
+            test_results["endpoint_tested"] = "GET /2/users/me"
+            test_results["api_version"] = "v2"
+            test_results["additional_info"] = "rate_limit_remaining: simulated_900/900"
         elif platform_enum == PlatformType.FACEBOOK:
-            test_results["test_details"] = {
-                "endpoint_tested": "GET /me",
-                "page_verified": True,
-                "permissions": ["pages_manage_posts", "pages_read_engagement"]
-            }
+            test_results["endpoint_tested"] = "GET /me"
+            test_results["api_version"] = "Graph API"
+            test_results["additional_info"] = "page_verified: True, permissions: pages_manage_posts"
         elif platform_enum == PlatformType.INSTAGRAM:
-            test_results["test_details"] = {
-                "endpoint_tested": "GET /me/accounts",
-                "business_account_verified": True,
-                "publishing_enabled": True
-            }
+            test_results["endpoint_tested"] = "GET /me/accounts"
+            test_results["api_version"] = "Graph API"
+            test_results["additional_info"] = "business_account_verified: True, publishing_enabled: True"
 
         return test_results
 
@@ -357,15 +361,20 @@ async def test_credentials_connection(site_web: SiteWeb, platform: str):
             "platform": platform,
             "credentials_valid": False,
             "error": str(e),
-            "connection_test": "failed"
+            "connection_test": "failed",
+            "timestamp": datetime.now().isoformat(),
+            "endpoint_tested": "",
+            "api_version": "",
+            "additional_info": ""
         }
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Plateforme non valide: {platform}")
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Erreur lors du test de credentials: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors du test: {str(e)}")
 
 
-@app.accounts
+@app.get("/accounts")
 async def list_all_accounts():
     """
     Liste tous les comptes configurés par site web et plateforme
@@ -462,17 +471,6 @@ async def get_examples():
     }
 
 
-async def get_examples():
-    """
-    Exemples de requêtes pour les différents types de publications
-    """
-    return {
-        "simple_multi_platform": PublicationRequestExamples.simple_multi_platform().dict(),
-        "instagram_carousel": PublicationRequestExamples.instagram_carousel().dict(),
-        "mixed_content_types": PublicationRequestExamples.mixed_content_types().dict()
-    }
-
-
 @app.post("/test/validate-account")
 async def test_validate_account(site_web: SiteWeb, platform: str):
     """
@@ -563,6 +561,177 @@ async def test_format_content_advanced(
         logger.error(f"Erreur lors du test de formatage avancé: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur de formatage: {str(e)}")
 
+
+@app.get("/queue/status")
+async def get_queue_status():
+    """Récupère le statut des queues Celery"""
+    try:
+        from app.services.celery_app import celery_app
+        import redis
+
+        # Connexion à Redis pour vérifier les queues
+        redis_client = redis.Redis.from_url(settings.celery_broker_url)
+
+        queues = {
+            'content_generation': redis_client.llen('content_generation'),
+            'content_formatting': redis_client.llen('content_formatting'),
+            'content_publishing': redis_client.llen('content_publishing'),
+            'image_generation': redis_client.llen('image_generation')
+        }
+
+        # Vérifier les workers actifs
+        inspect = celery_app.control.inspect()
+        active_tasks = inspect.active()
+        registered_tasks = inspect.registered()
+
+        return {
+            "queues": queues,
+            "workers": {
+                "active_tasks": active_tasks or {},
+                "registered_tasks": registered_tasks or {}
+            },
+            "broker_url": settings.celery_broker_url,
+            "status": "connected"
+        }
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération du statut des queues: {str(e)}")
+        return {
+            "queues": {"error": str(e)},
+            "workers": {},
+            "status": "error"
+        }
+
+
+@app.post("/publish/async")
+async def publish_content_async(request: EnhancedPublicationRequest):
+    """Publication asynchrone avec Celery distribuée"""
+    try:
+        from app.orchestrator.celery_workflow import celery_orchestrator
+
+        # Lancer le workflow asynchrone avec Celery
+        task_id = celery_orchestrator.execute_workflow_async(request)
+
+        return {
+            "task_id": task_id,
+            "status": "submitted",
+            "message": "Workflow soumis au système distribué Celery"
+        }
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la publication asynchrone: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.get("/workflow/{task_id}")
+async def get_workflow_status(task_id: str):
+    """Récupère le statut d'un workflow Celery"""
+    try:
+        from app.orchestrator.celery_workflow import celery_orchestrator
+
+        workflow_status = celery_orchestrator.get_workflow_status(task_id)
+        return workflow_status
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération du statut workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.get("/workflows")
+async def get_all_workflows():
+    """Récupère tous les workflows"""
+    try:
+        from app.orchestrator.celery_workflow import celery_orchestrator
+
+        workflows = celery_orchestrator.get_all_workflows()
+        return {
+            "workflows": workflows,
+            "total": len(workflows)
+        }
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des workflows: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.get("/metrics/workflows")
+async def get_workflow_metrics():
+    """Récupère les métriques des workflows"""
+    try:
+        from app.orchestrator.celery_workflow import celery_orchestrator
+
+        metrics = celery_orchestrator.get_workflow_metrics()
+        return metrics
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des métriques: {str(e)}")
+        return {
+            "error": str(e),
+            "total_workflows": 0,
+            "status_distribution": {},
+            "generated_at": datetime.now().isoformat()
+        }
+
+
+@app.get("/health/celery")
+async def celery_health_check():
+    """Vérification de santé Celery via l'API directement"""
+    try:
+        from app.services.celery_app import celery_app
+        import redis
+
+        # Test 1: Connexion Redis
+        try:
+            redis_client = redis.Redis.from_url(settings.celery_broker_url)
+            redis_client.ping()
+            redis_healthy = True
+        except Exception:
+            redis_healthy = False
+
+        # Test 2: Workers actifs
+        try:
+            inspect = celery_app.control.inspect()
+            active_workers = inspect.active()
+            registered_workers = inspect.registered()
+
+            worker_count = len(active_workers) if active_workers else 0
+            workers_healthy = worker_count > 0
+        except Exception:
+            worker_count = 0
+            workers_healthy = False
+
+        # Test 3: Queue accessible
+        try:
+            queue_sizes = {}
+            for queue in ['content_generation', 'content_formatting', 'content_publishing']:
+                queue_sizes[queue] = redis_client.llen(queue)
+            queues_healthy = True
+        except Exception:
+            queue_sizes = {}
+            queues_healthy = False
+
+        # Statut global
+        overall_healthy = redis_healthy and queues_healthy
+
+        status_code = 200 if overall_healthy else 503
+
+        return {
+            "status": "healthy" if overall_healthy else "unhealthy",
+            "redis_connection": redis_healthy,
+            "workers_active": workers_healthy,
+            "worker_count": worker_count,
+            "queues_accessible": queues_healthy,
+            "queue_sizes": queue_sizes,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Erreur lors du health check Celery: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 if __name__ == "__main__":
     import uvicorn

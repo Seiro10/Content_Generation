@@ -1,10 +1,16 @@
 from celery import Celery
 from app.config.settings import settings
 import logging
+import sys
 
+# Configure logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    stream=sys.stdout,
+)
 logger = logging.getLogger(__name__)
 
-# Créer l'instance Celery
 celery_app = Celery(
     "social_media_publisher",
     broker=settings.celery_broker_url,
@@ -17,18 +23,14 @@ celery_app = Celery(
     ]
 )
 
-# Configuration Celery
 celery_app.conf.update(
-    # Timezone
     timezone='UTC',
     enable_utc=True,
 
-    # Serialization
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
 
-    # Task routing
     task_routes={
         'app.services.tasks.content_generation.*': {'queue': 'content_generation'},
         'app.services.tasks.content_formatting.*': {'queue': 'content_formatting'},
@@ -36,13 +38,12 @@ celery_app.conf.update(
         'app.services.tasks.image_generation.*': {'queue': 'image_generation'},
     },
 
-    # Worker configuration
     worker_max_tasks_per_child=1000,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
+    task_reject_on_worker_lost=True,  # ✅ éviter les doubles en cas de crash
 
-    # Result backend settings
-    result_expires=3600,  # 1 hour
+    result_expires=3600,
     result_backend_transport_options={
         'retry_on_timeout': True,
         'socket_keepalive': True,
@@ -53,16 +54,15 @@ celery_app.conf.update(
         },
     },
 
-    # Retry settings
-    task_default_retry_delay=60,  # 1 minute
+    task_default_retry_delay=60,
     task_max_retries=3,
 
-    # Monitoring
+    broker_connection_retry_on_startup=True,  # ✅ pour compat Celery 6
+
     worker_send_task_events=True,
     task_send_sent_event=True,
 )
 
-# Auto-discover tasks
 celery_app.autodiscover_tasks([
     'app.services.tasks'
 ])

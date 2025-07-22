@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Social Media Publisher API
   social-media-api:
@@ -13,16 +11,12 @@ services:
       - ENVIRONMENT=production
       - API_PORT=8090
       - DEBUG=false
-
-      # Claude LLM
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-placeholder_key}
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-3-sonnet-20240229}
-
-      # Celery Configuration
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
-
-      # Social Media APIs - StuffGaming.fr
+      - MAX_RETRY_ATTEMPTS=${MAX_RETRY_ATTEMPTS:-3}
+      - TASK_TIMEOUT=${TASK_TIMEOUT:-300}
       - STUFFGAMING_FR_TWITTER_API_KEY=${STUFFGAMING_FR_TWITTER_API_KEY}
       - STUFFGAMING_FR_TWITTER_API_SECRET=${STUFFGAMING_FR_TWITTER_API_SECRET}
       - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN}
@@ -34,37 +28,6 @@ services:
       - STUFFGAMING_FR_FACEBOOK_PAGE_ID=${STUFFGAMING_FR_FACEBOOK_PAGE_ID}
       - STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN=${STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN}
       - STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID=${STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-
-      # Social Media APIs - Gaming.com
-      - GAMING_COM_TWITTER_API_KEY=${GAMING_COM_TWITTER_API_KEY}
-      - GAMING_COM_TWITTER_API_SECRET=${GAMING_COM_TWITTER_API_SECRET}
-      - GAMING_COM_TWITTER_ACCESS_TOKEN=${GAMING_COM_TWITTER_ACCESS_TOKEN}
-      - GAMING_COM_TWITTER_ACCESS_TOKEN_SECRET=${GAMING_COM_TWITTER_ACCESS_TOKEN_SECRET}
-      - GAMING_COM_TWITTER_BEARER_TOKEN=${GAMING_COM_TWITTER_BEARER_TOKEN}
-      - GAMING_COM_FACEBOOK_APP_ID=${GAMING_COM_FACEBOOK_APP_ID}
-      - GAMING_COM_FACEBOOK_APP_SECRET=${GAMING_COM_FACEBOOK_APP_SECRET}
-      - GAMING_COM_FACEBOOK_ACCESS_TOKEN=${GAMING_COM_FACEBOOK_ACCESS_TOKEN}
-      - GAMING_COM_FACEBOOK_PAGE_ID=${GAMING_COM_FACEBOOK_PAGE_ID}
-      - GAMING_COM_INSTAGRAM_ACCESS_TOKEN=${GAMING_COM_INSTAGRAM_ACCESS_TOKEN}
-      - GAMING_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID=${GAMING_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-
-      # Social Media APIs - Football.com
-      - FOOTBALL_COM_TWITTER_API_KEY=${FOOTBALL_COM_TWITTER_API_KEY}
-      - FOOTBALL_COM_TWITTER_API_SECRET=${FOOTBALL_COM_TWITTER_API_SECRET}
-      - FOOTBALL_COM_TWITTER_ACCESS_TOKEN=${FOOTBALL_COM_TWITTER_ACCESS_TOKEN}
-      - FOOTBALL_COM_TWITTER_ACCESS_TOKEN_SECRET=${FOOTBALL_COM_TWITTER_ACCESS_TOKEN_SECRET}
-      - FOOTBALL_COM_TWITTER_BEARER_TOKEN=${FOOTBALL_COM_TWITTER_BEARER_TOKEN}
-      - FOOTBALL_COM_FACEBOOK_APP_ID=${FOOTBALL_COM_FACEBOOK_APP_ID}
-      - FOOTBALL_COM_FACEBOOK_APP_SECRET=${FOOTBALL_COM_FACEBOOK_APP_SECRET}
-      - FOOTBALL_COM_FACEBOOK_ACCESS_TOKEN=${FOOTBALL_COM_FACEBOOK_ACCESS_TOKEN}
-      - FOOTBALL_COM_FACEBOOK_PAGE_ID=${FOOTBALL_COM_FACEBOOK_PAGE_ID}
-      - FOOTBALL_COM_INSTAGRAM_ACCESS_TOKEN=${FOOTBALL_COM_INSTAGRAM_ACCESS_TOKEN}
-      - FOOTBALL_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID=${FOOTBALL_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-
-      # Task Configuration
-      - MAX_RETRY_ATTEMPTS=${MAX_RETRY_ATTEMPTS:-3}
-      - TASK_TIMEOUT=${TASK_TIMEOUT:-300}
-
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
@@ -80,7 +43,8 @@ services:
     networks:
       - social-media-network
     depends_on:
-      - social-media-redis
+      social-media-redis:
+        condition: service_healthy
 
   # Celery Worker for Content Generation
   social-media-worker-content:
@@ -90,16 +54,10 @@ services:
     command: ["worker-content"]
     environment:
       - ENVIRONMENT=production
-
-      # Claude LLM
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-placeholder_key}
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-3-sonnet-20240229}
-
-      # Celery Configuration
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
-
-      # Same social media credentials as API service
       - STUFFGAMING_FR_TWITTER_API_KEY=${STUFFGAMING_FR_TWITTER_API_KEY}
       - STUFFGAMING_FR_TWITTER_API_SECRET=${STUFFGAMING_FR_TWITTER_API_SECRET}
       - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN}
@@ -111,31 +69,6 @@ services:
       - STUFFGAMING_FR_FACEBOOK_PAGE_ID=${STUFFGAMING_FR_FACEBOOK_PAGE_ID}
       - STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN=${STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN}
       - STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID=${STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-
-      - GAMING_COM_TWITTER_API_KEY=${GAMING_COM_TWITTER_API_KEY}
-      - GAMING_COM_TWITTER_API_SECRET=${GAMING_COM_TWITTER_API_SECRET}
-      - GAMING_COM_TWITTER_ACCESS_TOKEN=${GAMING_COM_TWITTER_ACCESS_TOKEN}
-      - GAMING_COM_TWITTER_ACCESS_TOKEN_SECRET=${GAMING_COM_TWITTER_ACCESS_TOKEN_SECRET}
-      - GAMING_COM_TWITTER_BEARER_TOKEN=${GAMING_COM_TWITTER_BEARER_TOKEN}
-      - GAMING_COM_FACEBOOK_APP_ID=${GAMING_COM_FACEBOOK_APP_ID}
-      - GAMING_COM_FACEBOOK_APP_SECRET=${GAMING_COM_FACEBOOK_APP_SECRET}
-      - GAMING_COM_FACEBOOK_ACCESS_TOKEN=${GAMING_COM_FACEBOOK_ACCESS_TOKEN}
-      - GAMING_COM_FACEBOOK_PAGE_ID=${GAMING_COM_FACEBOOK_PAGE_ID}
-      - GAMING_COM_INSTAGRAM_ACCESS_TOKEN=${GAMING_COM_INSTAGRAM_ACCESS_TOKEN}
-      - GAMING_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID=${GAMING_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-
-      - FOOTBALL_COM_TWITTER_API_KEY=${FOOTBALL_COM_TWITTER_API_KEY}
-      - FOOTBALL_COM_TWITTER_API_SECRET=${FOOTBALL_COM_TWITTER_API_SECRET}
-      - FOOTBALL_COM_TWITTER_ACCESS_TOKEN=${FOOTBALL_COM_TWITTER_ACCESS_TOKEN}
-      - FOOTBALL_COM_TWITTER_ACCESS_TOKEN_SECRET=${FOOTBALL_COM_TWITTER_ACCESS_TOKEN_SECRET}
-      - FOOTBALL_COM_TWITTER_BEARER_TOKEN=${FOOTBALL_COM_TWITTER_BEARER_TOKEN}
-      - FOOTBALL_COM_FACEBOOK_APP_ID=${FOOTBALL_COM_FACEBOOK_APP_ID}
-      - FOOTBALL_COM_FACEBOOK_APP_SECRET=${FOOTBALL_COM_FACEBOOK_APP_SECRET}
-      - FOOTBALL_COM_FACEBOOK_ACCESS_TOKEN=${FOOTBALL_COM_FACEBOOK_ACCESS_TOKEN}
-      - FOOTBALL_COM_FACEBOOK_PAGE_ID=${FOOTBALL_COM_FACEBOOK_PAGE_ID}
-      - FOOTBALL_COM_INSTAGRAM_ACCESS_TOKEN=${FOOTBALL_COM_INSTAGRAM_ACCESS_TOKEN}
-      - FOOTBALL_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID=${FOOTBALL_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
@@ -144,7 +77,8 @@ services:
     networks:
       - social-media-network
     depends_on:
-      - social-media-redis
+      social-media-redis:
+        condition: service_healthy
 
   # Celery Worker for Publishing
   social-media-worker-publishing:
@@ -154,52 +88,10 @@ services:
     command: ["worker-publishing"]
     environment:
       - ENVIRONMENT=production
-
-      # Claude LLM
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-placeholder_key}
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-3-sonnet-20240229}
-
-      # Celery Configuration
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
-
-      # Same social media credentials as API service
-      - STUFFGAMING_FR_TWITTER_API_KEY=${STUFFGAMING_FR_TWITTER_API_KEY}
-      - STUFFGAMING_FR_TWITTER_API_SECRET=${STUFFGAMING_FR_TWITTER_API_SECRET}
-      - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN}
-      - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN_SECRET=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN_SECRET}
-      - STUFFGAMING_FR_TWITTER_BEARER_TOKEN=${STUFFGAMING_FR_TWITTER_BEARER_TOKEN}
-      - STUFFGAMING_FR_FACEBOOK_APP_ID=${STUFFGAMING_FR_FACEBOOK_APP_ID}
-      - STUFFGAMING_FR_FACEBOOK_APP_SECRET=${STUFFGAMING_FR_FACEBOOK_APP_SECRET}
-      - STUFFGAMING_FR_FACEBOOK_ACCESS_TOKEN=${STUFFGAMING_FR_FACEBOOK_ACCESS_TOKEN}
-      - STUFFGAMING_FR_FACEBOOK_PAGE_ID=${STUFFGAMING_FR_FACEBOOK_PAGE_ID}
-      - STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN=${STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN}
-      - STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID=${STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-
-      - GAMING_COM_TWITTER_API_KEY=${GAMING_COM_TWITTER_API_KEY}
-      - GAMING_COM_TWITTER_API_SECRET=${GAMING_COM_TWITTER_API_SECRET}
-      - GAMING_COM_TWITTER_ACCESS_TOKEN=${GAMING_COM_TWITTER_ACCESS_TOKEN}
-      - GAMING_COM_TWITTER_ACCESS_TOKEN_SECRET=${GAMING_COM_TWITTER_ACCESS_TOKEN_SECRET}
-      - GAMING_COM_TWITTER_BEARER_TOKEN=${GAMING_COM_TWITTER_BEARER_TOKEN}
-      - GAMING_COM_FACEBOOK_APP_ID=${GAMING_COM_FACEBOOK_APP_ID}
-      - GAMING_COM_FACEBOOK_APP_SECRET=${GAMING_COM_FACEBOOK_APP_SECRET}
-      - GAMING_COM_FACEBOOK_ACCESS_TOKEN=${GAMING_COM_FACEBOOK_ACCESS_TOKEN}
-      - GAMING_COM_FACEBOOK_PAGE_ID=${GAMING_COM_FACEBOOK_PAGE_ID}
-      - GAMING_COM_INSTAGRAM_ACCESS_TOKEN=${GAMING_COM_INSTAGRAM_ACCESS_TOKEN}
-      - GAMING_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID=${GAMING_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-
-      - FOOTBALL_COM_TWITTER_API_KEY=${FOOTBALL_COM_TWITTER_API_KEY}
-      - FOOTBALL_COM_TWITTER_API_SECRET=${FOOTBALL_COM_TWITTER_API_SECRET}
-      - FOOTBALL_COM_TWITTER_ACCESS_TOKEN=${FOOTBALL_COM_TWITTER_ACCESS_TOKEN}
-      - FOOTBALL_COM_TWITTER_ACCESS_TOKEN_SECRET=${FOOTBALL_COM_TWITTER_ACCESS_TOKEN_SECRET}
-      - FOOTBALL_COM_TWITTER_BEARER_TOKEN=${FOOTBALL_COM_TWITTER_BEARER_TOKEN}
-      - FOOTBALL_COM_FACEBOOK_APP_ID=${FOOTBALL_COM_FACEBOOK_APP_ID}
-      - FOOTBALL_COM_FACEBOOK_APP_SECRET=${FOOTBALL_COM_FACEBOOK_APP_SECRET}
-      - FOOTBALL_COM_FACEBOOK_ACCESS_TOKEN=${FOOTBALL_COM_FACEBOOK_ACCESS_TOKEN}
-      - FOOTBALL_COM_FACEBOOK_PAGE_ID=${FOOTBALL_COM_FACEBOOK_PAGE_ID}
-      - FOOTBALL_COM_INSTAGRAM_ACCESS_TOKEN=${FOOTBALL_COM_INSTAGRAM_ACCESS_TOKEN}
-      - FOOTBALL_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID=${FOOTBALL_COM_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
@@ -208,9 +100,10 @@ services:
     networks:
       - social-media-network
     depends_on:
-      - social-media-redis
+      social-media-redis:
+        condition: service_healthy
 
-  # Celery Beat Scheduler (for periodic tasks)
+  # Celery Beat Scheduler
   social-media-beat:
     build:
       context: .
@@ -218,11 +111,9 @@ services:
     command: ["beat"]
     environment:
       - ENVIRONMENT=production
-
-      # Celery Configuration
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
-
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-placeholder_key}
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
@@ -230,34 +121,36 @@ services:
     networks:
       - social-media-network
     depends_on:
-      - social-media-redis
+      social-media-redis:
+        condition: service_healthy
 
-  # Celery Flower Monitoring (optional)
   social-media-flower:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: ["flower"]
+    image: mher/flower:2.0.1
     ports:
       - "5555:5555"
     environment:
-      - ENVIRONMENT=production
-      - FLOWER_USER=${FLOWER_USER:-admin}
-      - FLOWER_PASSWORD=${FLOWER_PASSWORD:-admin}
-
-      # Celery Configuration
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
-      - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
-
-    volumes:
-      - social_media_logs:/app/logs
+    command: >
+      celery 
+      --broker=redis://social-media-redis:6379/1 
+      flower 
+      --port=5555 
+      --basic-auth-force=true 
+      --basic-auth=admin:admin
+      --auto-refresh=false
     restart: unless-stopped
     networks:
       - social-media-network
     depends_on:
-      - social-media-redis
+      social-media-redis:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://admin:admin@localhost:5555" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  # Redis for Celery
+  # Redis for Celery - HEALTHCHECK CORRIGÉ
   social-media-redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
@@ -269,13 +162,13 @@ services:
     volumes:
       - social_media_redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping"]
+      test: [ "CMD", "redis-cli", "--raw", "incr", "ping" ]
       interval: 30s
       timeout: 10s
       retries: 3
     restart: unless-stopped
 
-  # PostgreSQL Database (for persistent storage)
+  # PostgreSQL Database - HEALTHCHECK SIMPLIFIÉ
   social-media-db:
     image: postgres:15-alpine
     environment:
@@ -287,7 +180,7 @@ services:
     networks:
       - social-media-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-social_media_user}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-social_media_user} -d ${POSTGRES_DB:-social_media_publisher}" ]
       interval: 30s
       timeout: 10s
       retries: 3
