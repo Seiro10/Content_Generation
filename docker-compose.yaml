@@ -17,6 +17,17 @@ services:
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
       - MAX_RETRY_ATTEMPTS=${MAX_RETRY_ATTEMPTS:-3}
       - TASK_TIMEOUT=${TASK_TIMEOUT:-300}
+      - STUFFGAMING_FR_TWITTER_API_KEY=${STUFFGAMING_FR_TWITTER_API_KEY}
+      - STUFFGAMING_FR_TWITTER_API_SECRET=${STUFFGAMING_FR_TWITTER_API_SECRET}
+      - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN}
+      - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN_SECRET=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN_SECRET}
+      - STUFFGAMING_FR_TWITTER_BEARER_TOKEN=${STUFFGAMING_FR_TWITTER_BEARER_TOKEN}
+      - STUFFGAMING_FR_FACEBOOK_APP_ID=${STUFFGAMING_FR_FACEBOOK_APP_ID}
+      - STUFFGAMING_FR_FACEBOOK_APP_SECRET=${STUFFGAMING_FR_FACEBOOK_APP_SECRET}
+      - STUFFGAMING_FR_FACEBOOK_ACCESS_TOKEN=${STUFFGAMING_FR_FACEBOOK_ACCESS_TOKEN}
+      - STUFFGAMING_FR_FACEBOOK_PAGE_ID=${STUFFGAMING_FR_FACEBOOK_PAGE_ID}
+      - STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN=${STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN}
+      - STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID=${STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID}
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
@@ -47,6 +58,17 @@ services:
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-3-sonnet-20240229}
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
+      - STUFFGAMING_FR_TWITTER_API_KEY=${STUFFGAMING_FR_TWITTER_API_KEY}
+      - STUFFGAMING_FR_TWITTER_API_SECRET=${STUFFGAMING_FR_TWITTER_API_SECRET}
+      - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN}
+      - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN_SECRET=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN_SECRET}
+      - STUFFGAMING_FR_TWITTER_BEARER_TOKEN=${STUFFGAMING_FR_TWITTER_BEARER_TOKEN}
+      - STUFFGAMING_FR_FACEBOOK_APP_ID=${STUFFGAMING_FR_FACEBOOK_APP_ID}
+      - STUFFGAMING_FR_FACEBOOK_APP_SECRET=${STUFFGAMING_FR_FACEBOOK_APP_SECRET}
+      - STUFFGAMING_FR_FACEBOOK_ACCESS_TOKEN=${STUFFGAMING_FR_FACEBOOK_ACCESS_TOKEN}
+      - STUFFGAMING_FR_FACEBOOK_PAGE_ID=${STUFFGAMING_FR_FACEBOOK_PAGE_ID}
+      - STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN=${STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN}
+      - STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID=${STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID}
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
@@ -91,6 +113,7 @@ services:
       - ENVIRONMENT=production
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-placeholder_key}
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
@@ -101,15 +124,20 @@ services:
       social-media-redis:
         condition: service_healthy
 
-  # Celery Flower Monitoring - CONFIGURATION SIMPLIFIÉE
   social-media-flower:
     image: mher/flower:2.0.1
     ports:
       - "5555:5555"
     environment:
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
-      - FLOWER_BASIC_AUTH=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-admin}
-    command: celery --broker=redis://social-media-redis:6379/1 flower --port=5555
+    command: >
+      celery 
+      --broker=redis://social-media-redis:6379/1 
+      flower 
+      --port=5555 
+      --basic-auth-force=true 
+      --basic-auth=admin:admin
+      --auto-refresh=false
     restart: unless-stopped
     networks:
       - social-media-network
@@ -117,7 +145,7 @@ services:
       social-media-redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5555"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://admin:admin@localhost:5555" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -134,7 +162,7 @@ services:
     volumes:
       - social_media_redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: [ "CMD", "redis-cli", "--raw", "incr", "ping" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -152,7 +180,7 @@ services:
     networks:
       - social-media-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-social_media_user} -d ${POSTGRES_DB:-social_media_publisher}" ]
       interval: 30s
       timeout: 10s
       retries: 3

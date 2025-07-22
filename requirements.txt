@@ -91,3 +91,4 @@ boto3
 psycopg2-binary==2.9.9
 alembic==1.13.1
 gunicorn
+python-multipart==0.0.20
