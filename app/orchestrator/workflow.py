@@ -9,6 +9,7 @@ from app.services.llm_service import llm_service
 import logging
 import uuid
 from datetime import datetime
+from app.models.accounts import SiteWeb
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ class ContentPublisherOrchestrator:
                 logger.info(f"Compte validé: {account.account_name} pour {request.site_web}/{config.platform}")
 
                 # Créer une clé unique pour cette combinaison plateforme/type
-                config_key = f"{config.platform}_{config.content_type}"
+                config_key = f"{config.platform.value}_{config.content_type.value}"
 
                 if config.platform == PlatformType.TWITTER:
                     formatted = await self._format_twitter_content(base_content, config, account)
@@ -334,14 +335,85 @@ class ContentPublisherOrchestrator:
             )
 
     async def _simulate_publication(self, platform: str, content: Any) -> Dict[str, Any]:
-        """Simule la publication (à remplacer par les vrais agents)"""
-        # Simulation d'une publication réussie
-        return {
-            "status": "success",
-            "post_id": f"fake_id_{uuid.uuid4().hex[:8]}",
-            "post_url": f"https://{platform}.com/fake_post",
-            "published_at": datetime.now().isoformat()
-        }
+        """Publication réelle ou simulée selon la plateforme"""
+        if platform == "twitter_post":
+            return await self._publish_to_twitter(content)
+        else:
+            # Simulation pour les autres plateformes
+            return {
+                "status": "success",
+                "post_id": f"fake_id_{uuid.uuid4().hex[:8]}",
+                "post_url": f"https://{platform}.com/fake_post",
+                "published_at": datetime.now().isoformat()
+            }
+
+    async def _publish_to_twitter(self, content) -> Dict[str, Any]:
+        """Publication réelle sur Twitter avec requests-oauthlib"""
+        try:
+            from app.config.credentials import get_platform_credentials
+            from requests_oauthlib import OAuth1Session
+            import asyncio
+            import json
+
+            # Récupérer les credentials Twitter pour StuffGaming
+            creds = get_platform_credentials(SiteWeb.STUFFGAMING, PlatformType.TWITTER)
+
+            # Préparer le tweet
+            tweet_text = content.tweet if hasattr(content, 'tweet') else str(content)
+
+            # Fonction synchrone pour Twitter (requests-oauthlib n'est pas async)
+            def post_tweet():
+                # Créer session OAuth 1.0a
+                twitter = OAuth1Session(
+                    creds.api_key,
+                    client_secret=creds.api_secret,
+                    resource_owner_key=creds.access_token,
+                    resource_owner_secret=creds.access_token_secret,
+                )
+
+                # Payload pour l'API v2
+                payload = {"text": tweet_text}
+
+                # Poster le tweet
+                response = twitter.post(
+                    "https://api.twitter.com/2/tweets",
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+
+                return response
+
+            # Exécuter de manière asynchrone
+            response = await asyncio.get_event_loop().run_in_executor(None, post_tweet)
+
+            if response.status_code == 201:
+                data = response.json()
+                tweet_id = data["data"]["id"]
+
+                logger.info(f"✅ Tweet publié avec succès ! ID: {tweet_id}")
+                logger.info(f"📝 Contenu: {tweet_text}")
+
+                return {
+                    "status": "success",
+                    "post_id": tweet_id,
+                    "post_url": f"https://twitter.com/i/web/status/{tweet_id}",
+                    "published_at": datetime.now().isoformat(),
+                    "tweet_text": tweet_text
+                }
+            else:
+                logger.error(f"❌ Erreur Twitter API: {response.status_code} - {response.text}")
+                return {
+                    "status": "failed",
+                    "error": f"Twitter API error: {response.status_code}",
+                    "details": response.text
+                }
+
+        except Exception as e:
+            logger.error(f"❌ Erreur lors de la publication Twitter: {str(e)}")
+            return {
+                "status": "failed",
+                "error": str(e)
+            }
 
     async def execute_workflow(self, request: EnhancedPublicationRequest) -> WorkflowState:
         """Exécute le workflow complet"""

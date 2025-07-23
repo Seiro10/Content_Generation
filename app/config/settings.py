@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # LLM Configuration (Claude) - Optionnel pour permettre à Flower de démarrer
     anthropic_api_key: Optional[str] = None
-    claude_model: str = "claude-3-sonnet-20240229"
+    claude_model: str = "claude-3-5-sonnet-20241022"
 
     # Celery Configuration - DB 1 pour éviter conflits
     celery_broker_url: str = "redis://localhost:6379/1"
