@@ -205,7 +205,14 @@ class ContentPublisherOrchestrator:
             content, "twitter", "post", constraints
         )
 
-        return TwitterPostOutput(tweet=formatted)
+        twitter_output = TwitterPostOutput(tweet=formatted)
+
+        # ← AJOUTER: Passer l'image du config vers l'output
+        if config.image_s3_url:
+            twitter_output.image_s3_url = config.image_s3_url
+            logger.info(f"🖼️ Image S3 ajoutée au formatting: {config.image_s3_url}")
+
+        return twitter_output
 
     async def _format_facebook_content(self, content: str, config: PlatformContentConfig,
                                        account) -> FacebookPostOutput:
@@ -347,13 +354,18 @@ class ContentPublisherOrchestrator:
                 "published_at": datetime.now().isoformat()
             }
 
+    # Dans app/orchestrator/workflow.py, remplacer _publish_to_twitter() :
+
     async def _publish_to_twitter(self, content) -> Dict[str, Any]:
-        """Publication réelle sur Twitter avec requests-oauthlib"""
+        """Publication réelle sur Twitter avec support d'image S3"""
         try:
             from app.config.credentials import get_platform_credentials
             from requests_oauthlib import OAuth1Session
             import asyncio
             import json
+            import boto3
+            import tempfile
+            import os
 
             # Récupérer les credentials Twitter pour StuffGaming
             creds = get_platform_credentials(SiteWeb.STUFFGAMING, PlatformType.TWITTER)
@@ -362,7 +374,7 @@ class ContentPublisherOrchestrator:
             tweet_text = content.tweet if hasattr(content, 'tweet') else str(content)
 
             # Fonction synchrone pour Twitter (requests-oauthlib n'est pas async)
-            def post_tweet():
+            def post_tweet_with_media():
                 # Créer session OAuth 1.0a
                 twitter = OAuth1Session(
                     creds.api_key,
@@ -371,8 +383,55 @@ class ContentPublisherOrchestrator:
                     resource_owner_secret=creds.access_token_secret,
                 )
 
+                media_id = None
+
+                # Gérer l'image S3 si présente
+                if hasattr(content, 'image_s3_url') and content.image_s3_url:
+                    try:
+                        logger.info(f"📸 Téléchargement image S3: {content.image_s3_url}")
+
+                        # Parse S3 URL (format: s3://bucket/path ou https://...)
+                        if content.image_s3_url.startswith('s3://'):
+                            # Format: s3://bucket/path
+                            s3_path = content.image_s3_url[5:]  # Remove 's3://'
+                            bucket, key = s3_path.split('/', 1)
+                        else:
+                            # Format: https://s3.amazonaws.com/bucket/path
+                            from urllib.parse import urlparse
+                            parsed = urlparse(content.image_s3_url)
+                            bucket = parsed.path.split('/')[1]
+                            key = '/'.join(parsed.path.split('/')[2:])
+
+                        # Télécharger depuis S3
+                        s3_client = boto3.client('s3')
+
+                        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                            s3_client.download_file(bucket, key, tmp_file.name)
+
+                            # Upload vers Twitter
+                            with open(tmp_file.name, 'rb') as img_file:
+                                upload_response = twitter.post(
+                                    "https://upload.twitter.com/1.1/media/upload.json",
+                                    files={"media": img_file}
+                                )
+
+                                if upload_response.status_code == 200:
+                                    media_data = upload_response.json()
+                                    media_id = media_data["media_id_string"]
+                                    logger.info(f"✅ Image uploadée, Media ID: {media_id}")
+                                else:
+                                    logger.error(f"❌ Erreur upload image: {upload_response.text}")
+
+                            # Nettoyer le fichier temporaire
+                            os.unlink(tmp_file.name)
+
+                    except Exception as e:
+                        logger.error(f"❌ Erreur traitement image S3: {str(e)}")
+
                 # Payload pour l'API v2
                 payload = {"text": tweet_text}
+                if media_id:
+                    payload["media"] = {"media_ids": [media_id]}
 
                 # Poster le tweet
                 response = twitter.post(
@@ -384,7 +443,7 @@ class ContentPublisherOrchestrator:
                 return response
 
             # Exécuter de manière asynchrone
-            response = await asyncio.get_event_loop().run_in_executor(None, post_tweet)
+            response = await asyncio.get_event_loop().run_in_executor(None, post_tweet_with_media)
 
             if response.status_code == 201:
                 data = response.json()
@@ -393,12 +452,17 @@ class ContentPublisherOrchestrator:
                 logger.info(f"✅ Tweet publié avec succès ! ID: {tweet_id}")
                 logger.info(f"📝 Contenu: {tweet_text}")
 
+                # Ajouter info image si présente
+                if hasattr(content, 'image_s3_url') and content.image_s3_url:
+                    logger.info(f"🖼️ Image: {content.image_s3_url}")
+
                 return {
                     "status": "success",
                     "post_id": tweet_id,
                     "post_url": f"https://twitter.com/i/web/status/{tweet_id}",
                     "published_at": datetime.now().isoformat(),
-                    "tweet_text": tweet_text
+                    "tweet_text": tweet_text,
+                    "image_uploaded": bool(hasattr(content, 'image_s3_url') and content.image_s3_url)
                 }
             else:
                 logger.error(f"❌ Erreur Twitter API: {response.status_code} - {response.text}")

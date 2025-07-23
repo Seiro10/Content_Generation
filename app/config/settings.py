@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     max_retry_attempts: int = 3
     task_timeout: int = 300  # 5 minutes
 
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
+    aws_default_region: str = "eu-west-3"
+    s3_bucket_name: str = "matrix-reloaded-rss-img-bucket"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
