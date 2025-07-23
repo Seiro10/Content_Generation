@@ -14,6 +14,7 @@ class TwitterPostOutput(BaseModel):
     """Sortie formatée pour Twitter"""
     tweet: str = Field(..., max_length=280, description="Tweet formaté (≤280 caractères)")
     medias: Optional[List[str]] = Field(default=None, description="URLs des médias")
+    image_s3_url: Optional[str] = Field(default=None)
 
     @validator('tweet')
     def validate_tweet_length(cls, v):

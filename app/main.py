@@ -3,12 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 import uuid
+import json
 from datetime import datetime
 from typing import Dict, Optional, List
 
 from app.config.settings import settings
 from app.models.base import TaskStatus, PublicationResult, PlatformType, ContentType
-from app.models.content import SimplePublicationRequest, EnhancedPublicationRequest, PublicationRequestExamples
+from app.models.content import SimplePublicationRequest, EnhancedPublicationRequest, PublicationRequestExamples, PlatformContentConfig
 from app.models.accounts import account_mapping, SiteWeb, AccountValidationError
 from app.config.credentials import credentials_manager, CredentialsError
 from app.orchestrator.workflow import orchestrator
@@ -250,6 +251,52 @@ async def list_credentials_status():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des credentials: {str(e)}")
 
+
+@app.post("/publish/twitter/with-image")
+async def publish_twitter_with_image(
+        texte_source: str = Form(...),
+        site_web: SiteWeb = Form(...),
+        image_s3_url: str = Form(...),  # URL complète S3
+        hashtags: Optional[str] = Form(None),  # JSON string
+        background_tasks: BackgroundTasks = BackgroundTasks()
+):
+    """
+    Endpoint spécialisé pour Twitter + Image depuis S3
+    """
+    try:
+        # Parse hashtags si fournis
+        hashtags_list = json.loads(hashtags) if hashtags else []
+
+        # Créer la config spécialisée
+        request = EnhancedPublicationRequest(
+            texte_source=texte_source,
+            site_web=site_web,
+            platforms_config=[
+                PlatformContentConfig(
+                    platform=PlatformType.TWITTER,
+                    content_type=ContentType.POST,
+                    hashtags=hashtags_list,
+                    # Nouvelle propriété pour l'image
+                    image_s3_url=image_s3_url
+                )
+            ]
+        )
+
+        return await _process_publication(request, background_tasks)
+
+    except Exception as e:
+        logger.error(f"Erreur publication Twitter + image: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
+
+
+# Usage avec curl
+"""
+curl -X POST "http://localhost:8090/publish/twitter/with-image" \
+  -F "texte_source=🎮 Découvrez la maj de Diablo Immortal" \
+  -F "site_web=stuffgaming.fr" \
+  -F "image_s3_url=s3://matrix-reloaded-rss-img-bucket/blizzard_news/banner_Diablo_Immortal_Corrections_.jpg" \
+  -F 'hashtags=["#Gaming", "#Diablo"]'
+"""
 
 @app.get("/credentials/{site_web}/{platform}")
 async def check_credentials(site_web: SiteWeb, platform: str):

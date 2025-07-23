@@ -20,6 +20,8 @@ class PlatformContentConfig(BaseModel):
     nb_slides: Optional[int] = None
     titre_carousel: Optional[str] = None
     images_urls: Optional[List[str]] = None
+    # Pour Twitter + image depuis S3
+    image_s3_url: Optional[str] = None
 
 
 class SimplePublicationRequest(BaseModel):
