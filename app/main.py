@@ -15,6 +15,9 @@ from app.config.credentials import credentials_manager, CredentialsError
 from app.orchestrator.workflow import orchestrator
 from app.orchestrator.celery_workflow import celery_orchestrator
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # Configuration du logging
 logging.basicConfig(
     level=logging.INFO,

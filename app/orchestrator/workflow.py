@@ -10,6 +10,8 @@ import logging
 import uuid
 from datetime import datetime
 from app.models.accounts import SiteWeb
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -205,9 +207,11 @@ class ContentPublisherOrchestrator:
             content, "twitter", "post", constraints
         )
 
-        twitter_output = TwitterPostOutput(tweet=formatted)
+        twitter_output = TwitterPostOutput(
+            tweet=formatted,
+            image_s3_url=config.image_s3_url
+        )
 
-        # ← AJOUTER: Passer l'image du config vers l'output
         if config.image_s3_url:
             twitter_output.image_s3_url = config.image_s3_url
             logger.info(f"🖼️ Image S3 ajoutée au formatting: {config.image_s3_url}")
@@ -388,28 +392,50 @@ class ContentPublisherOrchestrator:
                 # Gérer l'image S3 si présente
                 if hasattr(content, 'image_s3_url') and content.image_s3_url:
                     try:
+                        from app.config.settings import settings
+                        import os
+
                         logger.info(f"📸 Téléchargement image S3: {content.image_s3_url}")
 
-                        # Parse S3 URL (format: s3://bucket/path ou https://...)
+                        # ✅ DEBUG : Vérifier les credentials
+                        aws_key = settings.aws_access_key_id or os.getenv('AWS_ACCESS_KEY_ID')
+                        aws_secret = settings.aws_secret_access_key or os.getenv('AWS_SECRET_ACCESS_KEY')
+                        aws_region = settings.aws_default_region or os.getenv('AWS_DEFAULT_REGION', 'eu-west-3')
+
+                        logger.info(f"🔑 AWS Key: {aws_key[:10] + '...' if aws_key else 'NOT_SET'}")
+                        logger.info(f"🌍 AWS Region: {aws_region}")
+
+                        if not aws_key or not aws_secret:
+                            raise Exception(
+                                f"AWS credentials manquantes - Key: {bool(aws_key)}, Secret: {bool(aws_secret)}")
+
+                        # Parse S3 URL (format: s3://bucket/path)
                         if content.image_s3_url.startswith('s3://'):
-                            # Format: s3://bucket/path
                             s3_path = content.image_s3_url[5:]  # Remove 's3://'
                             bucket, key = s3_path.split('/', 1)
                         else:
-                            # Format: https://s3.amazonaws.com/bucket/path
-                            from urllib.parse import urlparse
-                            parsed = urlparse(content.image_s3_url)
-                            bucket = parsed.path.split('/')[1]
-                            key = '/'.join(parsed.path.split('/')[2:])
+                            raise Exception(f"Format S3 URL non supporté: {content.image_s3_url}")
 
-                        # Télécharger depuis S3
-                        s3_client = boto3.client('s3')
+                        logger.info(f"📦 S3 Bucket: {bucket}, Key: {key}")
+
+                        # ✅ CORRECTION : Créer le client S3 avec credentials explicites
+                        s3_client = boto3.client(
+                            's3',
+                            aws_access_key_id=aws_key,
+                            aws_secret_access_key=aws_secret,
+                            region_name=aws_region
+                        )
+
+                        logger.info("✅ Client S3 créé avec succès")
 
                         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                            logger.info(f"⬇️ Téléchargement de {bucket}/{key} vers {tmp_file.name}")
                             s3_client.download_file(bucket, key, tmp_file.name)
+                            logger.info("✅ Téléchargement S3 réussi")
 
                             # Upload vers Twitter
                             with open(tmp_file.name, 'rb') as img_file:
+                                logger.info("⬆️ Upload vers Twitter...")
                                 upload_response = twitter.post(
                                     "https://upload.twitter.com/1.1/media/upload.json",
                                     files={"media": img_file}
@@ -418,12 +444,14 @@ class ContentPublisherOrchestrator:
                                 if upload_response.status_code == 200:
                                     media_data = upload_response.json()
                                     media_id = media_data["media_id_string"]
-                                    logger.info(f"✅ Image uploadée, Media ID: {media_id}")
+                                    logger.info(f"✅ Image uploadée vers Twitter, Media ID: {media_id}")
                                 else:
-                                    logger.error(f"❌ Erreur upload image: {upload_response.text}")
+                                    logger.error(
+                                        f"❌ Erreur upload Twitter: {upload_response.status_code} - {upload_response.text}")
 
                             # Nettoyer le fichier temporaire
                             os.unlink(tmp_file.name)
+                            logger.info("🧹 Fichier temporaire supprimé")
 
                     except Exception as e:
                         logger.error(f"❌ Erreur traitement image S3: {str(e)}")
