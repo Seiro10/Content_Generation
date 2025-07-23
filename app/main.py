@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Optional, List
 
 from app.config.settings import settings
-from app.models.base import TaskStatus, PublicationResult, PlatformType
+from app.models.base import TaskStatus, PublicationResult, PlatformType, ContentType
 from app.models.content import SimplePublicationRequest, EnhancedPublicationRequest, PublicationRequestExamples
 from app.models.accounts import account_mapping, SiteWeb, AccountValidationError
 from app.config.credentials import credentials_manager, CredentialsError
@@ -176,12 +176,16 @@ async def process_publication_request(request_id: str, request: EnhancedPublicat
             from app.models.base import TaskResult
             platform_results = []
 
-            for platform, result in workflow_result.get("publication_results", {}).items():
+            for platform_key, result in workflow_result.get("publication_results", {}).items():
+                # Extract platform from key like "twitter_post"
+                platform_str = platform_key.split('_')[0]  # Gets "twitter"
+                content_type_str = platform_key.split('_')[1] if '_' in platform_key else "post"  # Gets "post"
+
                 task_result = TaskResult(
-                    task_id=f"{request_id}_{platform}",
+                    task_id=f"{request_id}_{platform_str}",
                     status=TaskStatus.COMPLETED if result.get("status") == "success" else TaskStatus.FAILED,
-                    platform=platform,
-                    content_type="post",  # Par défaut pour l'instant
+                    platform=PlatformType(platform_str),  # Convert string to enum
+                    content_type=ContentType(content_type_str),  # Convert string to enum
                     result=result,
                     created_at=datetime.now(),
                     completed_at=datetime.now()
