@@ -301,6 +301,92 @@ curl -X POST "http://localhost:8090/publish/twitter/with-image" \
   -F 'hashtags=["#Gaming", "#Diablo"]'
 """
 
+
+@app.post("/publish/instagram/with-image")
+async def publish_instagram_with_image(
+        texte_source: str = Form(...),
+        site_web: SiteWeb = Form(...),
+        image_url: str = Form(...),  # URL de l'image (S3 ou autre)
+        content_type: str = Form("post"),  # post, story, carousel
+        hashtags: Optional[str] = Form(None),  # JSON string
+        nb_slides: Optional[int] = Form(None),  # Pour carrousels
+        background_tasks: BackgroundTasks = BackgroundTasks()
+):
+    """
+    Endpoint spécialisé pour Instagram + Image
+    Supporte: post, story, carousel
+    """
+    try:
+        # Parse hashtags si fournis
+        hashtags_list = json.loads(hashtags) if hashtags else []
+
+        # Valider le type de contenu
+        try:
+            content_type_enum = ContentType(content_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Type de contenu invalide: {content_type}")
+
+        # Créer la config selon le type
+        config_data = {
+            "platform": PlatformType.INSTAGRAM,
+            "content_type": content_type_enum,
+            "hashtags": hashtags_list
+        }
+
+        # Ajouter les paramètres spécifiques
+        if content_type_enum == ContentType.CAROUSEL:
+            config_data["nb_slides"] = nb_slides or 3
+            config_data["images_urls"] = [image_url]  # Pour l'instant une seule image
+        elif content_type_enum == ContentType.POST:
+            # Pour les posts, on utilisera l'image_url dans le publisher
+            pass
+        elif content_type_enum == ContentType.STORY:
+            # Pour les stories aussi
+            pass
+
+        # Créer la requête
+        request = EnhancedPublicationRequest(
+            texte_source=texte_source,
+            site_web=site_web,
+            platforms_config=[PlatformContentConfig(**config_data)]
+        )
+
+        return await _process_publication(request, background_tasks)
+
+    except Exception as e:
+        logger.error(f"Erreur publication Instagram: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
+
+
+# Usage avec curl:
+"""
+# Post Instagram classique
+curl -X POST "http://localhost:8090/publish/instagram/with-image" \
+  -F "texte_source=🎮 Découvrez notre nouveau jeu révolutionnaire !" \
+  -F "site_web=stuffgaming.fr" \
+  -F "image_url=https://images.unsplash.com/photo-1516251193007-45ef944ab0c6?w=1080" \
+  -F "content_type=post" \
+  -F 'hashtags=["#Gaming", "#NewGame", "#StuffGaming"]'
+
+# Story Instagram
+curl -X POST "http://localhost:8090/publish/instagram/with-image" \
+  -F "texte_source=Nouveau jeu disponible maintenant !" \
+  -F "site_web=stuffgaming.fr" \
+  -F "image_url=https://images.unsplash.com/photo-1516251193007-45ef944ab0c6?w=1080" \
+  -F "content_type=story" \
+  -F 'hashtags=["#Gaming"]'
+
+# Carrousel Instagram
+curl -X POST "http://localhost:8090/publish/instagram/with-image" \
+  -F "texte_source=Top 3 des fonctionnalités du nouveau jeu" \
+  -F "site_web=stuffgaming.fr" \
+  -F "image_url=https://images.unsplash.com/photo-1516251193007-45ef944ab0c6?w=1080" \
+  -F "content_type=carousel" \
+  -F "nb_slides=3" \
+  -F 'hashtags=["#Gaming", "#Features"]'
+"""
+
+
 @app.get("/credentials/{site_web}/{platform}")
 async def check_credentials(site_web: SiteWeb, platform: str):
     """
