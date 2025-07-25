@@ -1,3 +1,5 @@
+# app/agents/formatters/instagram.py - Updated with S3 support
+
 import logging
 import json
 from app.agents.base_agent import BaseFormatter
@@ -11,10 +13,27 @@ logger = logging.getLogger(__name__)
 
 
 class InstagramFormatter(BaseFormatter):
-    """Formatter spécialisé pour Instagram (post, story, carousel)"""
+    """Formatter spécialisé pour Instagram avec support S3"""
 
     def __init__(self):
         super().__init__(PlatformType.INSTAGRAM)
+
+    def _is_s3_url(self, url: str) -> bool:
+        """Vérifie si l'URL est une URL S3"""
+        return url.startswith('s3://') if url else False
+
+    def _separate_s3_and_regular_urls(self, urls_list):
+        """Sépare les URLs S3 des URLs normales"""
+        s3_urls = []
+        regular_urls = []
+
+        for url in urls_list or []:
+            if self._is_s3_url(url):
+                s3_urls.append(url)
+            else:
+                regular_urls.append(url)
+
+        return s3_urls, regular_urls
 
     async def format_content(
             self,
@@ -22,7 +41,7 @@ class InstagramFormatter(BaseFormatter):
             config: PlatformContentConfig,
             account: AccountConfig
     ) -> any:
-        """Formate le contenu pour Instagram selon le type"""
+        """Formate le contenu pour Instagram selon le type avec support S3"""
 
         logger.info(f"📸 Formatage Instagram {config.content_type} pour compte: {account.account_name}")
 
@@ -41,7 +60,7 @@ class InstagramFormatter(BaseFormatter):
             config: PlatformContentConfig,
             account: AccountConfig
     ) -> InstagramPostOutput:
-        """Formate un post Instagram classique"""
+        """Formate un post Instagram avec support S3"""
 
         constraints = {
             "tone": "décontracté avec émojis",
@@ -54,9 +73,16 @@ class InstagramFormatter(BaseFormatter):
             content, "instagram", "post", constraints
         )
 
+        # Gérer l'image S3 ou normale
+        image_s3_url = None
+        if config.image_s3_url and self._is_s3_url(config.image_s3_url):
+            image_s3_url = config.image_s3_url
+            logger.info(f"🖼️ Image S3 détectée pour le post: {config.image_s3_url}")
+
         result = InstagramPostOutput(
             legende=formatted_text,
-            hashtags=config.hashtags
+            hashtags=config.hashtags,
+            image_s3_url=image_s3_url
         )
 
         logger.info(f"✅ Post Instagram formaté: {formatted_text[:50]}...")
@@ -68,7 +94,7 @@ class InstagramFormatter(BaseFormatter):
             config: PlatformContentConfig,
             account: AccountConfig
     ) -> InstagramStoryOutput:
-        """Formate une story Instagram"""
+        """Formate une story Instagram avec support S3"""
 
         constraints = {
             "max_length": "50 caractères maximum",
@@ -81,8 +107,15 @@ class InstagramFormatter(BaseFormatter):
             content, "instagram", "story", constraints
         )
 
+        # Gérer l'image S3 pour la story
+        image_s3_url = None
+        if config.image_s3_url and self._is_s3_url(config.image_s3_url):
+            image_s3_url = config.image_s3_url
+            logger.info(f"🖼️ Image S3 détectée pour la story: {config.image_s3_url}")
+
         result = InstagramStoryOutput(
-            texte_story=formatted_text[:50]  # Sécurité longueur
+            texte_story=formatted_text[:50],  # Sécurité longueur
+            image_s3_url=image_s3_url
         )
 
         logger.info(f"✅ Story Instagram formatée: {formatted_text}")
@@ -94,28 +127,39 @@ class InstagramFormatter(BaseFormatter):
             config: PlatformContentConfig,
             account: AccountConfig
     ) -> InstagramCarouselOutput:
-        """Formate un carrousel Instagram avec gestion des images"""
+        """Formate un carrousel Instagram avec gestion S3 et URLs normales"""
 
-        # Gestion des images
-        images_urls = config.images_urls
+        # Séparer les URLs S3 des URLs normales
+        s3_urls, regular_urls = self._separate_s3_and_regular_urls(config.images_urls)
+
+        # Déterminer la source des images
+        images_urls = None
+        images_s3_urls = None
         images_generated = False
 
-        if not images_urls:
+        if s3_urls:
+            # Priorité aux URLs S3
+            images_s3_urls = s3_urls
+            logger.info(f"🖼️ Images S3 détectées: {len(s3_urls)} images")
+        elif regular_urls:
+            # Utiliser les URLs normales
+            images_urls = regular_urls
+            logger.info(f"🔗 URLs normales détectées: {len(regular_urls)} images")
+        else:
             # Pas d'images fournies -> génération automatique
             nb_slides = config.nb_slides or 5
             images_urls = generate_images(nb_slides, content[:100])
             images_generated = True
-            logger.info(f"Images générées automatiquement: {len(images_urls)} images")
-        else:
-            logger.info(f"Utilisation des images fournies: {len(images_urls)} images")
+            logger.info(f"🎨 Images générées automatiquement: {len(images_urls)} images")
 
         constraints = {
-            "nb_slides": config.nb_slides or len(images_urls),
+            "nb_slides": config.nb_slides or len(images_s3_urls or images_urls or []),
             "titre_carousel": config.titre_carousel,
             "hashtags": config.hashtags,
             "style": "découper en points clés",
             "account": account.account_name,
-            "images_provided": not images_generated
+            "images_provided": not images_generated,
+            "images_source": "s3" if images_s3_urls else "urls" if images_urls else "generated"
         }
 
         # Prompt spécifique pour carrousel
@@ -130,7 +174,7 @@ class InstagramFormatter(BaseFormatter):
 
         Chaque slide doit être courte et impactante (1-2 phrases max).
         La légende doit inciter à swiper et inclure les hashtags.
-        {"Images fournies par l'utilisateur." if not images_generated else "Images générées automatiquement."}
+        Source des images: {constraints['images_source']}
         """
 
         formatted_json = await llm_service.generate_content(content, system_prompt)
@@ -142,10 +186,14 @@ class InstagramFormatter(BaseFormatter):
                 legende=parsed["legende"],
                 hashtags=config.hashtags,
                 images_urls=images_urls,
+                images_s3_urls=images_s3_urls,
                 images_generated=images_generated
             )
 
             logger.info(f"✅ Carrousel Instagram formaté: {len(result.slides)} slides")
+            if images_s3_urls:
+                logger.info(f"📦 URLs S3: {len(images_s3_urls)} images")
+
             return result
 
         except Exception as e:
@@ -157,6 +205,7 @@ class InstagramFormatter(BaseFormatter):
                 legende=f"📱 Swipe pour découvrir → {' '.join(config.hashtags or [])}",
                 hashtags=config.hashtags,
                 images_urls=images_urls,
+                images_s3_urls=images_s3_urls,
                 images_generated=images_generated
             )
 
