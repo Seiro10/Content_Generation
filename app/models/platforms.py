@@ -63,6 +63,7 @@ class InstagramPostOutput(BaseModel):
     """Sortie formatée pour Instagram Post"""
     legende: str = Field(..., max_length=2000, description="Légende Instagram (≤2000 caractères)")
     hashtags: Optional[List[str]] = Field(default=None, description="Hashtags extraits")
+    image_s3_url: Optional[str] = Field(default=None, description="URL S3 de l'image principale")
 
 
 class InstagramStoryInput(BaseModel):
@@ -75,6 +76,7 @@ class InstagramStoryOutput(BaseModel):
     """Sortie formatée pour Instagram Story"""
     texte_story: str = Field(..., max_length=50, description="Texte story très court (≤50 caractères)")
     elements_graphiques: Optional[List[str]] = Field(default=None, description="Suggestions visuelles")
+    image_s3_url: Optional[str] = Field(default=None, description="URL S3 de l'image story")
 
 
 class InstagramCarouselInput(BaseModel):
@@ -91,6 +93,7 @@ class InstagramCarouselOutput(BaseModel):
     legende: str = Field(..., description="Légende globale du carrousel")
     hashtags: Optional[List[str]] = Field(default=None, description="Hashtags du carrousel")
     images_urls: Optional[List[str]] = Field(default=None, description="URLs des images à utiliser")
+    images_s3_urls: Optional[List[str]] = Field(default=None, description="URLs S3 des images")
     images_generated: bool = Field(default=False, description="True si les images ont été générées")
 
     @validator('slides')

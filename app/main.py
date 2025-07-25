@@ -302,29 +302,40 @@ curl -X POST "http://localhost:8090/publish/twitter/with-image" \
 """
 
 
+# app/main.py - Updated Instagram endpoint with S3 support
+
 @app.post("/publish/instagram/with-image")
 async def publish_instagram_with_image(
         texte_source: str = Form(...),
         site_web: SiteWeb = Form(...),
-        image_url: str = Form(...),  # URL de l'image (S3 ou autre)
+        image_url: Optional[str] = Form(None),  # URL normale ou S3
+        image_s3_url: Optional[str] = Form(None),  # URL S3 spécifique
         content_type: str = Form("post"),  # post, story, carousel
         hashtags: Optional[str] = Form(None),  # JSON string
         nb_slides: Optional[int] = Form(None),  # Pour carrousels
+        images_urls: Optional[str] = Form(None),  # JSON string pour carrousels
         background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
-    Endpoint spécialisé pour Instagram + Image
+    Endpoint spécialisé pour Instagram avec support S3
     Supporte: post, story, carousel
+    Gère à la fois URLs normales et URLs S3
     """
     try:
         # Parse hashtags si fournis
         hashtags_list = json.loads(hashtags) if hashtags else []
+
+        # Parse images_urls pour carrousels
+        images_urls_list = json.loads(images_urls) if images_urls else []
 
         # Valider le type de contenu
         try:
             content_type_enum = ContentType(content_type)
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Type de contenu invalide: {content_type}")
+
+        # Déterminer quelle image utiliser (priorité à image_s3_url)
+        final_image_url = image_s3_url or image_url
 
         # Créer la config selon le type
         config_data = {
@@ -333,16 +344,24 @@ async def publish_instagram_with_image(
             "hashtags": hashtags_list
         }
 
-        # Ajouter les paramètres spécifiques
+        # Ajouter les paramètres spécifiques selon le type
         if content_type_enum == ContentType.CAROUSEL:
             config_data["nb_slides"] = nb_slides or 3
-            config_data["images_urls"] = [image_url]  # Pour l'instant une seule image
-        elif content_type_enum == ContentType.POST:
-            # Pour les posts, on utilisera l'image_url dans le publisher
-            pass
-        elif content_type_enum == ContentType.STORY:
-            # Pour les stories aussi
-            pass
+            if images_urls_list:
+                config_data["images_urls"] = images_urls_list
+            elif final_image_url:
+                # Utiliser l'image fournie pour le carrousel
+                config_data["images_urls"] = [final_image_url]
+
+        elif content_type_enum in [ContentType.POST, ContentType.STORY]:
+            if final_image_url:
+                config_data["image_s3_url"] = final_image_url
+
+        # Log pour debug
+        if image_s3_url:
+            logger.info(f"📦 Instagram S3 URL reçue: {image_s3_url}")
+        elif image_url:
+            logger.info(f"🔗 Instagram URL normale reçue: {image_url}")
 
         # Créer la requête
         request = EnhancedPublicationRequest(
@@ -358,33 +377,139 @@ async def publish_instagram_with_image(
         raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
 
 
-# Usage avec curl:
+# Usage avec curl - Exemples mis à jour:
 """
-# Post Instagram classique
+# Post Instagram avec image S3
 curl -X POST "http://localhost:8090/publish/instagram/with-image" \
   -F "texte_source=🎮 Découvrez notre nouveau jeu révolutionnaire !" \
   -F "site_web=stuffgaming.fr" \
-  -F "image_url=https://images.unsplash.com/photo-1516251193007-45ef944ab0c6?w=1080" \
+  -F "image_s3_url=s3://matrix-reloaded-rss-img-bucket/games/new_collection.jpg" \
   -F "content_type=post" \
   -F 'hashtags=["#Gaming", "#NewGame", "#StuffGaming"]'
 
-# Story Instagram
+# Story Instagram avec image S3
 curl -X POST "http://localhost:8090/publish/instagram/with-image" \
   -F "texte_source=Nouveau jeu disponible maintenant !" \
   -F "site_web=stuffgaming.fr" \
-  -F "image_url=https://images.unsplash.com/photo-1516251193007-45ef944ab0c6?w=1080" \
+  -F "image_s3_url=s3://matrix-reloaded-rss-img-bucket/games/story_banner.jpg" \
   -F "content_type=story" \
   -F 'hashtags=["#Gaming"]'
 
-# Carrousel Instagram
+# Carrousel Instagram avec images S3 multiples
 curl -X POST "http://localhost:8090/publish/instagram/with-image" \
   -F "texte_source=Top 3 des fonctionnalités du nouveau jeu" \
   -F "site_web=stuffgaming.fr" \
-  -F "image_url=https://images.unsplash.com/photo-1516251193007-45ef944ab0c6?w=1080" \
   -F "content_type=carousel" \
   -F "nb_slides=3" \
+  -F 'images_urls=["s3://matrix-reloaded-rss-img-bucket/games/feat1.jpg", "s3://matrix-reloaded-rss-img-bucket/games/feat2.jpg", "s3://matrix-reloaded-rss-img-bucket/games/feat3.jpg"]' \
   -F 'hashtags=["#Gaming", "#Features"]'
+
+# Carrousel Instagram avec image S3 unique (répétée)
+curl -X POST "http://localhost:8090/publish/instagram/with-image" \
+  -F "texte_source=Guide pour débuter le jeu" \
+  -F "site_web=stuffgaming.fr" \
+  -F "image_s3_url=s3://matrix-reloaded-rss-img-bucket/games/guide_template.jpg" \
+  -F "content_type=carousel" \
+  -F "nb_slides=4" \
+  -F 'hashtags=["#Gaming", "#Guide"]'
 """
+
+
+# Add this endpoint to app/main.py
+
+@app.post("/convert/user-to-page-token")
+async def convert_user_to_page_token(user_token: str = Form(...)):
+    """Convert User Token to Page Access Token"""
+    try:
+        import requests
+
+        # Get all pages managed by the user
+        accounts_url = f"https://graph.facebook.com/v18.0/me/accounts?access_token={user_token}"
+        response = requests.get(accounts_url)
+
+        if response.status_code != 200:
+            return {"error": response.text}
+
+        data = response.json()
+        pages = data.get('data', [])
+
+        page_tokens = []
+        for page in pages:
+            page_id = page.get('id')
+            page_token = page.get('access_token')
+            page_name = page.get('name')
+
+            # Test if this page has Instagram connected
+            instagram_test_url = f"https://graph.facebook.com/v18.0/{page_id}?fields=instagram_business_account&access_token={page_token}"
+            instagram_response = requests.get(instagram_test_url)
+
+            instagram_info = None
+            if instagram_response.status_code == 200:
+                instagram_data = instagram_response.json()
+                instagram_info = instagram_data.get('instagram_business_account')
+
+            page_tokens.append({
+                "page_name": page_name,
+                "page_id": page_id,
+                "page_access_token": page_token,
+                "instagram_business_account": instagram_info,
+                "has_instagram": instagram_info is not None
+            })
+
+        return {
+            "user_token_valid": True,
+            "total_pages": len(pages),
+            "pages": page_tokens,
+            "instructions": {
+                "next_step": "Use the page_access_token from the page that has_instagram=true",
+                "instagram_business_id": "Use the instagram_business_account.id from the same page"
+            }
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+# Add this to app/main.py for debugging
+
+@app.get("/debug/instagram/{site_web}")
+async def debug_instagram_token(site_web: SiteWeb):
+    """Debug Instagram token validity"""
+    try:
+        from app.config.credentials import get_platform_credentials
+        from app.models.base import PlatformType
+        import requests
+
+        # Get credentials
+        creds = get_platform_credentials(site_web, PlatformType.INSTAGRAM)
+
+        # Test token validity
+        test_url = f"https://graph.facebook.com/v18.0/me?access_token={creds.access_token}"
+        response = requests.get(test_url)
+
+        # Test Instagram business account
+        ig_test_url = f"https://graph.facebook.com/v18.0/{creds.business_account_id}?fields=id,name,account_type&access_token={creds.access_token}"
+        ig_response = requests.get(ig_test_url)
+
+        return {
+            "site_web": site_web,
+            "token_test": {
+                "status_code": response.status_code,
+                "response": response.json() if response.status_code == 200 else response.text
+            },
+            "instagram_account_test": {
+                "status_code": ig_response.status_code,
+                "response": ig_response.json() if ig_response.status_code == 200 else ig_response.text
+            },
+            "credentials_info": {
+                "business_account_id": creds.business_account_id,
+                "app_id": creds.app_id,
+                "token_length": len(creds.access_token),
+                "token_preview": f"{creds.access_token[:20]}..." if creds.access_token else None
+            }
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/credentials/{site_web}/{platform}")
