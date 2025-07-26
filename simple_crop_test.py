@@ -81,8 +81,8 @@ def test_unified_cropper():
                 logger.error(f"❌ Wrong dimensions: {result.size}")
                 success = False
 
-        # Nettoyer
-        os.unlink(test_file)
+        # Nettoyer - FIX: Utiliser test_file.name au lieu de test_file
+        os.unlink(test_file.name)
         os.unlink(cropped_file)
         logger.info("🧹 Cleanup completed")
 
@@ -120,8 +120,8 @@ def test_opencv_cropper():
         with Image.open(cropped_file) as result:
             success = result.size == (300, 300)
 
-        # Nettoyer
-        os.unlink(test_file)
+        # Nettoyer - FIX: Utiliser test_file.name au lieu de test_file
+        os.unlink(test_file.name)
         os.unlink(cropped_file)
 
         if success:
@@ -160,8 +160,8 @@ def test_intelligent_cropper():
         with Image.open(cropped_file) as result:
             success = result.size == (500, 500)
 
-        # Nettoyer
-        os.unlink(test_file)
+        # Nettoyer - FIX: Utiliser test_file.name au lieu de test_file
+        os.unlink(test_file.name)
         os.unlink(cropped_file)
 
         if success:

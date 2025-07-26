@@ -54,8 +54,13 @@ try:
         print('⚠️ SAM not available, using OpenCV fallback')
 
     from app.services.unified_cropper import unified_cropper
+    if unified_cropper is None:
+        print('❌ Unified cropper not initialized')
+        exit(1)
+
     status = unified_cropper.get_status()
-    print(f'✅ Unified cropper initialized: {status[\"unified_cropper\"][\"chosen_method\"]}')
+    primary_method = status.get('primary_method', 'unknown')
+    print(f'✅ Unified cropper initialized: {primary_method}')
 
 except Exception as e:
     print(f'❌ Crop system test failed: {e}')
