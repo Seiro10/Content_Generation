@@ -151,7 +151,7 @@ class ContentPublisherOrchestrator:
         return state
 
     async def _publish_content_node(self, state: WorkflowState) -> WorkflowState:
-        """Nœud de publication utilisant les agents publishers"""
+        """Nœud de publication utilisant les agents publishers avec respect du paramètre published"""
         logger.info(f"Publication du contenu pour la tâche {state['task_id']}")
 
         formatted_content = state.get("formatted_content", {})
@@ -165,31 +165,69 @@ class ContentPublisherOrchestrator:
                 platform = PlatformType(platform_str)
                 content_type = ContentType(content_type_str)
 
+                # 🆕 TROUVER LA CONFIG CORRESPONDANTE POUR VÉRIFIER LE PARAMÈTRE PUBLISHED
+                matching_config = None
+                for config in request.platforms_config:
+                    if config.platform == platform and config.content_type == content_type:
+                        matching_config = config
+                        break
+
+                if not matching_config:
+                    logger.warning(f"Config non trouvée pour {platform_key}")
+                    continue
+
+                # 🆕 VÉRIFIER LE PARAMÈTRE PUBLISHED
+                if not matching_config.published:
+                    logger.info(f"🚫 Publication ignorée pour {platform_key} (published=False)")
+                    publication_results[platform_key] = {
+                        "status": "draft_created",
+                        "platform": platform_str,
+                        "content_type": content_type_str,
+                        "message": "Contenu sauvegardé en draft (non publié)",
+                        "published": False
+                    }
+                    continue
+
                 # Récupérer le compte
                 account = validate_account_exists(request.site_web, platform)
 
-                # Utiliser les agents publishers spécialisés
+                # 🆕 PASSER LE PARAMÈTRE PUBLISHED AUX PUBLISHERS
                 if platform == PlatformType.TWITTER:
-                    result = await twitter_publisher.publish_content(content, request.site_web, account)
+                    result = await twitter_publisher.publish_content(
+                        content, request.site_web, account, published=matching_config.published
+                    )
                     publication_results[platform_key] = result
 
                 elif platform == PlatformType.INSTAGRAM:
                     result = await instagram_publisher.publish_content(
-                        content, request.site_web, account, content_type
+                        content, request.site_web, account, content_type, published=matching_config.published
                     )
                     publication_results[platform_key] = result
 
                 else:
                     # Simulation pour les autres plateformes
-                    result = {
-                        "status": "simulated_success",
-                        "post_id": f"fake_id_{uuid.uuid4().hex[:8]}",
-                        "post_url": f"https://{platform_str}.com/fake_post",
-                        "published_at": datetime.now().isoformat()
-                    }
+                    if matching_config.published:
+                        result = {
+                            "status": "simulated_success",
+                            "post_id": f"fake_id_{uuid.uuid4().hex[:8]}",
+                            "post_url": f"https://{platform_str}.com/fake_post",
+                            "published_at": datetime.now().isoformat(),
+                            "published": True
+                        }
+                    else:
+                        result = {
+                            "status": "draft_created",
+                            "draft_id": f"fake_draft_{uuid.uuid4().hex[:8]}",
+                            "platform": platform_str,
+                            "message": "Draft simulé créé",
+                            "published": False
+                        }
                     publication_results[platform_key] = result
 
-                logger.info(f"Publication terminée pour {platform_key}: {result.get('status')}")
+                if matching_config.published:
+                    logger.info(f"✅ Publication terminée pour {platform_key}: {result.get('status')}")
+                else:
+                    logger.info(f"📝 Draft créé pour {platform_key}: {result.get('status')}")
 
             except Exception as e:
                 error_msg = f"Erreur publication {platform_key}: {str(e)}"
@@ -201,6 +239,7 @@ class ContentPublisherOrchestrator:
         state["current_step"] = "content_published"
 
         return state
+    
 
     async def _finalize_results_node(self, state: WorkflowState) -> WorkflowState:
         """Nœud de finalisation des résultats"""

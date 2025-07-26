@@ -131,11 +131,14 @@ class InstagramPublisher(BasePublisher):
         logger.info(f"📝 Mode: {'Publication' if published else 'Draft simulé'}")
 
         try:
-            # 🆕 Si draft demandé, créer un draft simulé
+            # 🆕 VÉRIFICATION DU PARAMÈTRE PUBLISHED EN PREMIER
             if not published:
+                logger.info(f"📝 Création draft Instagram {content_type} pour {account.account_name}")
                 return self._create_draft_simulation(formatted_content, site_web, account, content_type)
 
-            # Publication normale si published=True
+            # Publication normale seulement si published=True
+            logger.info(f"📤 Publication Instagram {content_type} pour {account.account_name}")
+
             # Récupérer les credentials Instagram
             creds = get_platform_credentials(site_web, PlatformType.INSTAGRAM)
 
@@ -153,9 +156,10 @@ class InstagramPublisher(BasePublisher):
             logger.error(f"❌ {error_msg}")
             return self._create_error_result(error_msg)
 
-    def _create_draft_simulation(self, formatted_content, site_web, account, content_type) -> dict:
+    def _create_draft_simulation(self, formatted_content, site_web: SiteWeb, account: AccountConfig,
+                                 content_type: ContentType) -> dict:
         """🆕 Simule un draft Instagram en stockant les données"""
-        draft_id = f"instagram_draft_{content_type}_{uuid.uuid4().hex[:8]}"
+        draft_id = f"instagram_draft_{content_type.value}_{uuid.uuid4().hex[:8]}"
 
         # Stocker le draft avec métadonnées
         draft_data = {
@@ -183,7 +187,7 @@ class InstagramPublisher(BasePublisher):
             {
                 "content_preview": preview_content,
                 "published": False,
-                "status_message": f"Draft Instagram {content_type} sauvegardé",
+                "status_message": f"Draft Instagram {content_type.value} sauvegardé",
                 "draft_info": {
                     "platform": "instagram",
                     "content_type": content_type.value,
@@ -206,7 +210,7 @@ class InstagramPublisher(BasePublisher):
             }
         )
 
-    def _generate_content_preview(self, formatted_content, content_type) -> dict:
+    def _generate_content_preview(self, formatted_content, content_type: ContentType) -> dict:
         """🆕 Génère un aperçu du contenu pour le draft"""
         preview = {"type": content_type.value}
 
@@ -215,14 +219,14 @@ class InstagramPublisher(BasePublisher):
                 "caption": formatted_content.legende[:100] + "..." if len(
                     formatted_content.legende) > 100 else formatted_content.legende,
                 "hashtags": formatted_content.hashtags or [],
-                "has_image": bool(formatted_content.image_s3_url),
-                "image_s3_url": formatted_content.image_s3_url
+                "has_image": bool(getattr(formatted_content, 'image_s3_url', None)),
+                "image_s3_url": getattr(formatted_content, 'image_s3_url', None)
             })
         elif content_type == ContentType.STORY:
             preview.update({
                 "text": formatted_content.texte_story,
-                "has_image": bool(formatted_content.image_s3_url),
-                "image_s3_url": formatted_content.image_s3_url
+                "has_image": bool(getattr(formatted_content, 'image_s3_url', None)),
+                "image_s3_url": getattr(formatted_content, 'image_s3_url', None)
             })
         elif content_type == ContentType.CAROUSEL:
             preview.update({
@@ -231,8 +235,12 @@ class InstagramPublisher(BasePublisher):
                 "caption": formatted_content.legende[:100] + "..." if len(
                     formatted_content.legende) > 100 else formatted_content.legende,
                 "hashtags": formatted_content.hashtags or [],
-                "has_images": bool(formatted_content.images_s3_urls or formatted_content.images_urls),
-                "images_count": len(formatted_content.images_s3_urls or formatted_content.images_urls or [])
+                "has_images": bool(
+                    getattr(formatted_content, 'images_s3_urls', None) or getattr(formatted_content, 'images_urls',
+                                                                                  None)),
+                "images_count": len(
+                    getattr(formatted_content, 'images_s3_urls', None) or getattr(formatted_content, 'images_urls',
+                                                                                  None) or [])
             })
 
         return preview
@@ -528,7 +536,7 @@ class InstagramPublisher(BasePublisher):
                 "slides_count": len(content.slides),
                 "images_count": len(content.images_s3_urls or content.images_urls or []),
                 "hashtags": content.hashtags,
-                "images_generated": content.images_generated,
+                "images_generated": getattr(content, 'images_generated', False),
                 "image_source": "s3" if content.images_s3_urls else "urls" if content.images_urls else "default",
                 "published": True
             }
