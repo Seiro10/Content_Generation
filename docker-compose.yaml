@@ -1,5 +1,5 @@
 services:
-  # Social Media Publisher API
+  # Social Media Publisher API with Intelligent Cropping
   social-media-api:
     build:
       context: .
@@ -11,12 +11,23 @@ services:
       - ENVIRONMENT=production
       - API_PORT=8090
       - DEBUG=false
+      # LLM Configuration
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-placeholder_key}
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-3-5-sonnet-20241022}
+      # Celery Configuration
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
       - MAX_RETRY_ATTEMPTS=${MAX_RETRY_ATTEMPTS:-3}
       - TASK_TIMEOUT=${TASK_TIMEOUT:-300}
+      # SAM (Intelligent Cropping) Configuration
+      - SAM_ENABLED=${SAM_ENABLED:-true}
+      - SAM_MODEL_TYPE=${SAM_MODEL_TYPE:-vit_b}
+      - SAM_CHECKPOINT_PATH=${SAM_CHECKPOINT_PATH:-/app/models/sam_checkpoints/sam_vit_b_01ec64.pth}
+      - SAM_DEVICE=${SAM_DEVICE:-cpu}
+      - SAM_FALLBACK_TO_OPENCV=${SAM_FALLBACK_TO_OPENCV:-true}
+      - CROP_METHOD=${CROP_METHOD:-intelligent}
+      - IMAGE_QUALITY=${IMAGE_QUALITY:-90}
+      # Social Media Credentials - StuffGaming.fr
       - STUFFGAMING_FR_TWITTER_API_KEY=${STUFFGAMING_FR_TWITTER_API_KEY}
       - STUFFGAMING_FR_TWITTER_API_SECRET=${STUFFGAMING_FR_TWITTER_API_SECRET}
       - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN}
@@ -28,22 +39,24 @@ services:
       - STUFFGAMING_FR_FACEBOOK_PAGE_ID=${STUFFGAMING_FR_FACEBOOK_PAGE_ID}
       - STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN=${STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN}
       - STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID=${STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-      - AWS_ACCESS_KEY_ID${AWS_ACCESS_KEY_ID}
+      # AWS Configuration
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-eu-west-3}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-matrix-reloaded-rss-img-bucket}
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
       - social_media_data:/app/data
       - social_media_output:/app/output
+      - sam_checkpoints:/app/models/sam_checkpoints
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
     networks:
       - social-media-network
     depends_on:
@@ -62,6 +75,7 @@ services:
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-3-5-sonnet-20241022}
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
+      # Social Media Credentials
       - STUFFGAMING_FR_TWITTER_API_KEY=${STUFFGAMING_FR_TWITTER_API_KEY}
       - STUFFGAMING_FR_TWITTER_API_SECRET=${STUFFGAMING_FR_TWITTER_API_SECRET}
       - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN}
@@ -73,10 +87,11 @@ services:
       - STUFFGAMING_FR_FACEBOOK_PAGE_ID=${STUFFGAMING_FR_FACEBOOK_PAGE_ID}
       - STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN=${STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN}
       - STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID=${STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID}
-      - AWS_ACCESS_KEY_ID${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY${AWS_SECRET_ACCESS_KEY}
-      - S3_BUCKET_NAME${S3_BUCKET_NAME}
-      - S3_REGION${S3_REGION}
+      # AWS Configuration
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-eu-west-3}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-matrix-reloaded-rss-img-bucket}
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
@@ -87,6 +102,75 @@ services:
     depends_on:
       social-media-redis:
         condition: service_healthy
+
+  # Celery Worker for Content Formatting
+  social-media-worker-formatting:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["worker-formatting"]
+    environment:
+      - ENVIRONMENT=production
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-placeholder_key}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-3-5-sonnet-20241022}
+      - CELERY_BROKER_URL=redis://social-media-redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
+      # AWS Configuration
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-eu-west-3}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-matrix-reloaded-rss-img-bucket}
+    volumes:
+      - social_media_logs:/app/logs
+      - social_media_temp:/app/temp
+      - social_media_data:/app/data
+    restart: unless-stopped
+    networks:
+      - social-media-network
+    depends_on:
+      social-media-redis:
+        condition: service_healthy
+
+  # NEW: Celery Worker for Image Processing with Intelligent Cropping
+  social-media-worker-image:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["worker-image"]
+    environment:
+      - ENVIRONMENT=production
+      - CELERY_BROKER_URL=redis://social-media-redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
+      # SAM Configuration
+      - SAM_ENABLED=${SAM_ENABLED:-true}
+      - SAM_MODEL_TYPE=${SAM_MODEL_TYPE:-vit_b}
+      - SAM_CHECKPOINT_PATH=${SAM_CHECKPOINT_PATH:-/app/models/sam_checkpoints/sam_vit_b_01ec64.pth}
+      - SAM_DEVICE=${SAM_DEVICE:-cpu}
+      - SAM_FALLBACK_TO_OPENCV=${SAM_FALLBACK_TO_OPENCV:-true}
+      - CROP_METHOD=${CROP_METHOD:-intelligent}
+      - IMAGE_QUALITY=${IMAGE_QUALITY:-90}
+      # AWS Configuration
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-eu-west-3}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-matrix-reloaded-rss-img-bucket}
+    volumes:
+      - social_media_logs:/app/logs
+      - social_media_temp:/app/temp
+      - social_media_data:/app/data
+      - sam_checkpoints:/app/models/sam_checkpoints
+    restart: unless-stopped
+    networks:
+      - social-media-network
+    depends_on:
+      social-media-redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
 
   # Celery Worker for Publishing
   social-media-worker-publishing:
@@ -100,14 +184,35 @@ services:
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-3-5-sonnet-20241022}
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
-      - AWS_ACCESS_KEY_ID${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY${AWS_SECRET_ACCESS_KEY}
-      - S3_BUCKET_NAME${S3_BUCKET_NAME}
-      - S3_REGION${S3_REGION}
+      # SAM Configuration (for unified cropper in publishers)
+      - SAM_ENABLED=${SAM_ENABLED:-true}
+      - SAM_MODEL_TYPE=${SAM_MODEL_TYPE:-vit_b}
+      - SAM_CHECKPOINT_PATH=${SAM_CHECKPOINT_PATH:-/app/models/sam_checkpoints/sam_vit_b_01ec64.pth}
+      - SAM_DEVICE=${SAM_DEVICE:-cpu}
+      - SAM_FALLBACK_TO_OPENCV=${SAM_FALLBACK_TO_OPENCV:-true}
+      - CROP_METHOD=${CROP_METHOD:-intelligent}
+      # Social Media Credentials
+      - STUFFGAMING_FR_TWITTER_API_KEY=${STUFFGAMING_FR_TWITTER_API_KEY}
+      - STUFFGAMING_FR_TWITTER_API_SECRET=${STUFFGAMING_FR_TWITTER_API_SECRET}
+      - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN}
+      - STUFFGAMING_FR_TWITTER_ACCESS_TOKEN_SECRET=${STUFFGAMING_FR_TWITTER_ACCESS_TOKEN_SECRET}
+      - STUFFGAMING_FR_TWITTER_BEARER_TOKEN=${STUFFGAMING_FR_TWITTER_BEARER_TOKEN}
+      - STUFFGAMING_FR_FACEBOOK_APP_ID=${STUFFGAMING_FR_FACEBOOK_APP_ID}
+      - STUFFGAMING_FR_FACEBOOK_APP_SECRET=${STUFFGAMING_FR_FACEBOOK_APP_SECRET}
+      - STUFFGAMING_FR_FACEBOOK_ACCESS_TOKEN=${STUFFGAMING_FR_FACEBOOK_ACCESS_TOKEN}
+      - STUFFGAMING_FR_FACEBOOK_PAGE_ID=${STUFFGAMING_FR_FACEBOOK_PAGE_ID}
+      - STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN=${STUFFGAMING_FR_INSTAGRAM_ACCESS_TOKEN}
+      - STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID=${STUFFGAMING_FR_INSTAGRAM_BUSINESS_ACCOUNT_ID}
+      # AWS Configuration
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-eu-west-3}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-matrix-reloaded-rss-img-bucket}
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
       - social_media_data:/app/data
+      - sam_checkpoints:/app/models/sam_checkpoints
     restart: unless-stopped
     networks:
       - social-media-network
@@ -126,10 +231,10 @@ services:
       - CELERY_BROKER_URL=redis://social-media-redis:6379/1
       - CELERY_RESULT_BACKEND=redis://social-media-redis:6379/1
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-placeholder_key}
-      - AWS_ACCESS_KEY_ID${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY${AWS_SECRET_ACCESS_KEY}
-      - S3_BUCKET_NAME${S3_BUCKET_NAME}
-      - S3_REGION${S3_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-eu-west-3}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-matrix-reloaded-rss-img-bucket}
     volumes:
       - social_media_logs:/app/logs
       - social_media_temp:/app/temp
@@ -140,6 +245,7 @@ services:
       social-media-redis:
         condition: service_healthy
 
+  # Flower Monitoring
   social-media-flower:
     image: mher/flower:2.0.1
     ports:
@@ -166,12 +272,12 @@ services:
       timeout: 10s
       retries: 3
 
-  # Redis for Celery - HEALTHCHECK CORRIGÉ
+  # Redis for Celery
   social-media-redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
     environment:
-      - REDIS_MAXMEMORY=512mb
+      - REDIS_MAXMEMORY=1gb
       - REDIS_MAXMEMORY_POLICY=allkeys-lru
     networks:
       - social-media-network
@@ -184,7 +290,7 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # PostgreSQL Database - HEALTHCHECK SIMPLIFIÉ
+  # PostgreSQL Database
   social-media-db:
     image: postgres:15-alpine
     environment:
@@ -202,6 +308,23 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # Optional: SAM Checkpoint Downloader (run once)
+  sam-downloader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["test-crop"]
+    environment:
+      - SAM_ENABLED=${SAM_ENABLED:-true}
+      - SAM_MODEL_TYPE=${SAM_MODEL_TYPE:-vit_b}
+    volumes:
+      - sam_checkpoints:/app/models/sam_checkpoints
+    networks:
+      - social-media-network
+    profiles:
+      - setup
+    restart: "no"
+
 volumes:
   social_media_logs:
     driver: local
@@ -214,6 +337,8 @@ volumes:
   social_media_redis_data:
     driver: local
   social_media_db_data:
+    driver: local
+  sam_checkpoints:
     driver: local
 
 networks:

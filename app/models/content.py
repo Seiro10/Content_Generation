@@ -14,7 +14,7 @@ class PlatformContentConfig(BaseModel):
     hashtags: Optional[List[str]] = None
     mentions: Optional[List[str]] = None
     lien_source: Optional[str] = None
-    lien_sticker: Optional[str] = None  # Pour Instagram stories
+    lien_sticker: Optional[str] = None
 
     # Configuration Instagram carrousel
     nb_slides: Optional[int] = None
@@ -22,6 +22,9 @@ class PlatformContentConfig(BaseModel):
     images_urls: Optional[List[str]] = None
     # Pour Twitter + image depuis S3
     image_s3_url: Optional[str] = None
+
+    # 🆕 NOUVEAU : Paramètre de visibilité
+    published: bool = True  # True = publié immédiatement, False = draft/non publié
 
 
 class SimplePublicationRequest(BaseModel):
@@ -155,6 +158,34 @@ class PublicationRequestExamples:
                     content_type=ContentType.POST,
                     hashtags=["#Football", "#Transfert"],
                     lien_source="https://football.com/article-transfert"
+                )
+            ]
+        )
+
+    @staticmethod
+    def draft_example() -> EnhancedPublicationRequest:
+        """🆕 Exemple de création de drafts"""
+        return EnhancedPublicationRequest(
+            texte_source="Contenu à vérifier avant publication",
+            site_web=SiteWeb.STUFFGAMING,
+            platforms_config=[
+                PlatformContentConfig(
+                    platform=PlatformType.FACEBOOK,
+                    content_type=ContentType.POST,
+                    hashtags=["#Gaming", "#Draft"],
+                    published=False  # 🆕 Draft Facebook
+                ),
+                PlatformContentConfig(
+                    platform=PlatformType.INSTAGRAM,
+                    content_type=ContentType.POST,
+                    hashtags=["#Gaming", "#Preview"],
+                    published=False  # 🆕 Draft simulé Instagram
+                ),
+                PlatformContentConfig(
+                    platform=PlatformType.TWITTER,
+                    content_type=ContentType.POST,
+                    hashtags=["#Gaming", "#Review"],
+                    published=False  # 🆕 Draft simulé Twitter
                 )
             ]
         )

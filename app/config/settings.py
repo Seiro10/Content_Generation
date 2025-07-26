@@ -41,10 +41,27 @@ class Settings(BaseSettings):
     max_retry_attempts: int = 3
     task_timeout: int = 300  # 5 minutes
 
+    # AWS S3 Configuration
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
     aws_default_region: str = "eu-west-3"
     s3_bucket_name: str = "matrix-reloaded-rss-img-bucket"
+
+    # SAM (Segment Anything Model) Configuration
+    sam_enabled: bool = True
+    sam_model_type: str = "vit_b"  # vit_b, vit_l, vit_h
+    sam_checkpoint_path: Optional[str] = None  # Chemin vers le checkpoint SAM
+    sam_device: str = "cpu"  # cpu ou cuda
+    sam_fallback_to_opencv: bool = True  # Utiliser OpenCV si SAM échoue
+
+    # Image Processing Configuration
+    crop_method: str = "intelligent"  # "intelligent", "simple", "opencv_only"
+    image_quality: int = 90  # Qualité JPEG (1-100)
+    max_image_size: int = 5 * 1024 * 1024  # 5MB max
+
+    # Timeouts pour le processing d'images
+    sam_timeout: int = 30  # Timeout SAM en secondes
+    opencv_timeout: int = 15  # Timeout OpenCV en secondes
 
     class Config:
         env_file = ".env"

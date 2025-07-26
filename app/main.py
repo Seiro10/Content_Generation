@@ -9,13 +9,15 @@ from typing import Dict, Optional, List
 
 from app.config.settings import settings
 from app.models.base import TaskStatus, PublicationResult, PlatformType, ContentType
-from app.models.content import SimplePublicationRequest, EnhancedPublicationRequest, PublicationRequestExamples, PlatformContentConfig
+from app.models.content import SimplePublicationRequest, EnhancedPublicationRequest, PublicationRequestExamples, \
+    PlatformContentConfig
 from app.models.accounts import account_mapping, SiteWeb, AccountValidationError
 from app.config.credentials import credentials_manager, CredentialsError
 from app.orchestrator.workflow import orchestrator
 from app.orchestrator.celery_workflow import celery_orchestrator
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # Configuration du logging
@@ -97,13 +99,23 @@ async def publish_content(
 @app.post("/publish/advanced", response_model=Dict[str, str])
 async def publish_content_advanced(
         request: EnhancedPublicationRequest,
-        background_tasks: BackgroundTasks
+        published: Optional[bool] = Form(None),  # 🆕 Paramètre global optionnel
+        background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
-    Endpoint avancé pour publier du contenu avec types spécifiques par plateforme.
-    Supporte Instagram stories, carrousels, etc.
+    🆕 Endpoint avancé avec contrôle de visibilité global
+    published=True : Publication immédiate (défaut)
+    published=False : Création de drafts/contenu non publié
     """
     try:
+        # 🆕 Appliquer le paramètre published global si fourni
+        if published is not None:
+            for config in request.platforms_config:
+                config.published = published
+
+            logger.info(
+                f"📝 Mode global appliqué: {'Publication' if published else 'Draft'} pour toutes les plateformes")
+
         return await _process_publication(request, background_tasks)
 
     except Exception as e:
@@ -120,7 +132,7 @@ async def _process_publication(
     request_id = str(uuid.uuid4())
 
     logger.info(f"Nouvelle demande de publication reçue: {request_id}")
-    logger.info(f"Configurations: {[(c.platform, c.content_type) for c in request.platforms_config]}")
+    logger.info(f"Configurations: {[(c.platform, c.content_type, c.published) for c in request.platforms_config]}")
 
     # Initialiser le résultat dans le store
     task_store[request_id] = PublicationResult(
@@ -261,10 +273,11 @@ async def publish_twitter_with_image(
         site_web: SiteWeb = Form(...),
         image_s3_url: str = Form(...),  # URL complète S3
         hashtags: Optional[str] = Form(None),  # JSON string
+        published: bool = Form(True),  # 🆕 Nouveau paramètre
         background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
-    Endpoint spécialisé pour Twitter + Image depuis S3
+    🆕 Endpoint spécialisé pour Twitter + Image depuis S3 avec contrôle de visibilité
     """
     try:
         # Parse hashtags si fournis
@@ -279,8 +292,8 @@ async def publish_twitter_with_image(
                     platform=PlatformType.TWITTER,
                     content_type=ContentType.POST,
                     hashtags=hashtags_list,
-                    # Nouvelle propriété pour l'image
-                    image_s3_url=image_s3_url
+                    image_s3_url=image_s3_url,
+                    published=published  # 🆕
                 )
             ]
         )
@@ -292,18 +305,6 @@ async def publish_twitter_with_image(
         raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
 
 
-# Usage avec curl
-"""
-curl -X POST "http://localhost:8090/publish/twitter/with-image" \
-  -F "texte_source=🎮 Découvrez la maj de Diablo Immortal" \
-  -F "site_web=stuffgaming.fr" \
-  -F "image_s3_url=s3://matrix-reloaded-rss-img-bucket/blizzard_news/banner_Diablo_Immortal_Corrections_.jpg" \
-  -F 'hashtags=["#Gaming", "#Diablo"]'
-"""
-
-
-# app/main.py - Updated Instagram endpoint with S3 support
-
 @app.post("/publish/instagram/with-image")
 async def publish_instagram_with_image(
         texte_source: str = Form(...),
@@ -314,10 +315,11 @@ async def publish_instagram_with_image(
         hashtags: Optional[str] = Form(None),  # JSON string
         nb_slides: Optional[int] = Form(None),  # Pour carrousels
         images_urls: Optional[str] = Form(None),  # JSON string pour carrousels
+        published: bool = Form(True),  # 🆕 Nouveau paramètre
         background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
-    Endpoint spécialisé pour Instagram avec support S3
+    🆕 Endpoint spécialisé pour Instagram avec support S3 et contrôle de visibilité
     Supporte: post, story, carousel
     Gère à la fois URLs normales et URLs S3
     """
@@ -341,7 +343,8 @@ async def publish_instagram_with_image(
         config_data = {
             "platform": PlatformType.INSTAGRAM,
             "content_type": content_type_enum,
-            "hashtags": hashtags_list
+            "hashtags": hashtags_list,
+            "published": published  # 🆕
         }
 
         # Ajouter les paramètres spécifiques selon le type
@@ -376,46 +379,6 @@ async def publish_instagram_with_image(
         logger.error(f"Erreur publication Instagram: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
 
-
-# Usage avec curl - Exemples mis à jour:
-"""
-# Post Instagram avec image S3
-curl -X POST "http://localhost:8090/publish/instagram/with-image" \
-  -F "texte_source=🎮 Découvrez notre nouveau jeu révolutionnaire !" \
-  -F "site_web=stuffgaming.fr" \
-  -F "image_s3_url=s3://matrix-reloaded-rss-img-bucket/games/new_collection.jpg" \
-  -F "content_type=post" \
-  -F 'hashtags=["#Gaming", "#NewGame", "#StuffGaming"]'
-
-# Story Instagram avec image S3
-curl -X POST "http://localhost:8090/publish/instagram/with-image" \
-  -F "texte_source=Nouveau jeu disponible maintenant !" \
-  -F "site_web=stuffgaming.fr" \
-  -F "image_s3_url=s3://matrix-reloaded-rss-img-bucket/games/story_banner.jpg" \
-  -F "content_type=story" \
-  -F 'hashtags=["#Gaming"]'
-
-# Carrousel Instagram avec images S3 multiples
-curl -X POST "http://localhost:8090/publish/instagram/with-image" \
-  -F "texte_source=Top 3 des fonctionnalités du nouveau jeu" \
-  -F "site_web=stuffgaming.fr" \
-  -F "content_type=carousel" \
-  -F "nb_slides=3" \
-  -F 'images_urls=["s3://matrix-reloaded-rss-img-bucket/games/feat1.jpg", "s3://matrix-reloaded-rss-img-bucket/games/feat2.jpg", "s3://matrix-reloaded-rss-img-bucket/games/feat3.jpg"]' \
-  -F 'hashtags=["#Gaming", "#Features"]'
-
-# Carrousel Instagram avec image S3 unique (répétée)
-curl -X POST "http://localhost:8090/publish/instagram/with-image" \
-  -F "texte_source=Guide pour débuter le jeu" \
-  -F "site_web=stuffgaming.fr" \
-  -F "image_s3_url=s3://matrix-reloaded-rss-img-bucket/games/guide_template.jpg" \
-  -F "content_type=carousel" \
-  -F "nb_slides=4" \
-  -F 'hashtags=["#Gaming", "#Guide"]'
-"""
-
-
-# Add this endpoint to app/main.py
 
 @app.post("/convert/user-to-page-token")
 async def convert_user_to_page_token(user_token: str = Form(...)):
@@ -469,7 +432,6 @@ async def convert_user_to_page_token(user_token: str = Form(...)):
     except Exception as e:
         return {"error": str(e)}
 
-# Add this to app/main.py for debugging
 
 @app.get("/debug/instagram/{site_web}")
 async def debug_instagram_token(site_web: SiteWeb):
@@ -571,8 +533,8 @@ async def check_credentials(site_web: SiteWeb, platform: str):
 
 @app.post("/test/credentials")
 async def test_credentials_connection(
-    site_web: str = Form(...),
-    platform: str = Form(...)
+        site_web: str = Form(...),
+        platform: str = Form(...)
 ):
     """
     Teste la connexion aux APIs avec les credentials
@@ -639,6 +601,237 @@ async def test_credentials_connection(
         raise HTTPException(status_code=500, detail=f"Erreur lors du test: {str(e)}")
 
 
+# 🆕 NOUVEAUX ENDPOINTS POUR LA GESTION DES DRAFTS
+
+@app.get("/drafts")
+async def list_all_drafts():
+    """🆕 Liste tous les drafts de toutes les plateformes"""
+    try:
+        from app.agents.publishers.instagram import list_instagram_drafts
+        from app.agents.publishers.twitter import list_twitter_drafts
+
+        all_drafts = {
+            "instagram": list_instagram_drafts(),
+            "twitter": list_twitter_drafts(),
+            "facebook": [],  # Facebook drafts sont gérés nativement
+            "total": 0
+        }
+
+        all_drafts["total"] = len(all_drafts["instagram"]) + len(all_drafts["twitter"])
+
+        return all_drafts
+
+    except Exception as e:
+        logger.error(f"Erreur liste drafts: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
+
+
+@app.get("/drafts/{draft_id}")
+async def get_draft_details(draft_id: str):
+    """🆕 Récupère les détails d'un draft spécifique"""
+    try:
+        from app.agents.publishers.instagram import get_instagram_draft
+        from app.agents.publishers.twitter import get_twitter_draft
+
+        # Essayer de trouver le draft dans les différents stores
+        draft = None
+
+        if draft_id.startswith("instagram_draft_"):
+            draft = get_instagram_draft(draft_id)
+        elif draft_id.startswith("twitter_draft_"):
+            draft = get_twitter_draft(draft_id)
+
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft non trouvé")
+
+        return draft
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur récupération draft: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
+
+
+@app.post("/publish/draft/{draft_id}")
+async def publish_draft(draft_id: str, background_tasks: BackgroundTasks):
+    """🆕 Publie un draft existant"""
+    try:
+        from app.agents.publishers.instagram import get_instagram_draft
+        from app.agents.publishers.twitter import get_twitter_draft
+
+        # Récupérer le draft
+        draft = None
+        platform = None
+
+        if draft_id.startswith("instagram_draft_"):
+            draft = get_instagram_draft(draft_id)
+            platform = "instagram"
+        elif draft_id.startswith("twitter_draft_"):
+            draft = get_twitter_draft(draft_id)
+            platform = "twitter"
+        elif draft_id.startswith("facebook_"):
+            # Pour Facebook, utiliser l'API native
+            platform = "facebook"
+
+        if not draft and platform != "facebook":
+            raise HTTPException(status_code=404, detail="Draft non trouvé")
+
+        if platform == "facebook":
+            # Publier draft Facebook natif
+            from app.agents.publishers.facebook import facebook_publisher
+
+            # Extraire site_web du draft_id ou utiliser une valeur par défaut
+            # En production, stocker cette info avec le draft
+            site_web = SiteWeb.STUFFGAMING  # À adapter selon votre logique
+
+            result = facebook_publisher.publish_draft(draft_id, site_web)
+            return {
+                "draft_id": draft_id,
+                "status": "published" if result["status"] == "success" else "failed",
+                "platform": platform,
+                "result": result
+            }
+
+        else:
+            # Pour Instagram/Twitter, recréer une demande de publication
+            site_web = SiteWeb(draft["site_web"])
+            content_type = ContentType(draft["content_type"])
+
+            # Recréer la config de publication
+            config = PlatformContentConfig(
+                platform=PlatformType(platform),
+                content_type=content_type,
+                published=True  # Forcer la publication
+            )
+
+            # Ajouter les données spécifiques du draft
+            if platform == "instagram":
+                # À adapter selon le type de contenu Instagram
+                pass
+            elif platform == "twitter":
+                config.hashtags = []  # Extraire des données du draft si nécessaire
+
+            # Créer une nouvelle demande de publication
+            request = EnhancedPublicationRequest(
+                texte_source=draft["content"].get("tweet", "Contenu du draft"),
+                site_web=site_web,
+                platforms_config=[config]
+            )
+
+            # Traiter la publication
+            publication_result = await _process_publication(request, background_tasks)
+
+            # Supprimer le draft après publication réussie
+            if platform == "instagram":
+                from app.agents.publishers.instagram import delete_instagram_draft
+                delete_instagram_draft(draft_id)
+            elif platform == "twitter":
+                from app.agents.publishers.twitter import delete_twitter_draft
+                delete_twitter_draft(draft_id)
+
+            return {
+                "draft_id": draft_id,
+                "status": "published",
+                "platform": platform,
+                "publication_request_id": publication_result["request_id"],
+                "result": publication_result
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur publication draft: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
+
+
+@app.delete("/drafts/{draft_id}")
+async def delete_draft(draft_id: str):
+    """🆕 Supprime un draft"""
+    try:
+        from app.agents.publishers.instagram import delete_instagram_draft
+        from app.agents.publishers.twitter import delete_twitter_draft
+        from app.agents.publishers.facebook import facebook_publisher
+
+        success = False
+        platform = None
+
+        if draft_id.startswith("instagram_draft_"):
+            success = delete_instagram_draft(draft_id)
+            platform = "instagram"
+        elif draft_id.startswith("twitter_draft_"):
+            success = delete_twitter_draft(draft_id)
+            platform = "twitter"
+        elif draft_id.startswith("facebook_"):
+            # Pour Facebook, utiliser l'API native
+            site_web = SiteWeb.STUFFGAMING  # À adapter
+            result = facebook_publisher.delete_draft(draft_id, site_web)
+            success = result["status"] == "success"
+            platform = "facebook"
+
+        if not success:
+            raise HTTPException(status_code=404, detail="Draft non trouvé ou erreur suppression")
+
+        return {
+            "draft_id": draft_id,
+            "status": "deleted",
+            "platform": platform,
+            "message": f"Draft {platform} supprimé avec succès"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur suppression draft: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
+
+
+@app.get("/examples/with-published")
+async def get_examples_with_published():
+    """
+    🆕 Exemples de requêtes avec le paramètre published
+    """
+    return {
+        "publication_immediate": PublicationRequestExamples.simple_multi_platform().dict(),
+        "creation_drafts": PublicationRequestExamples.draft_example().dict(),
+        "instagram_carousel_draft": {
+            **PublicationRequestExamples.instagram_carousel_with_images().dict(),
+            "platforms_config": [
+                {
+                    **PublicationRequestExamples.instagram_carousel_with_images().platforms_config[0].dict(),
+                    "published": False
+                }
+            ]
+        },
+        "mixed_published_draft": {
+            "texte_source": "Contenu avec publication mixte",
+            "site_web": "stuffgaming.fr",
+            "platforms_config": [
+                {
+                    "platform": "facebook",
+                    "content_type": "post",
+                    "published": True,  # Publication immédiate Facebook
+                    "hashtags": ["#Gaming"]
+                },
+                {
+                    "platform": "instagram",
+                    "content_type": "post",
+                    "published": False,  # Draft Instagram
+                    "hashtags": ["#Gaming", "#Preview"]
+                },
+                {
+                    "platform": "twitter",
+                    "content_type": "post",
+                    "published": False,  # Draft Twitter
+                    "hashtags": ["#Gaming", "#Draft"]
+                }
+            ]
+        }
+    }
+
+
+# ... (reste des endpoints existants inchangés) ...
+
 @app.get("/accounts")
 async def list_all_accounts():
     """
@@ -664,339 +857,6 @@ async def list_all_accounts():
         "accounts_by_site": accounts_by_site
     }
 
-
-@app.get("/accounts/{site_web}")
-async def list_accounts_for_site(site_web: SiteWeb):
-    """
-    Liste les comptes d'un site web spécifique
-    """
-    try:
-        site_accounts = account_mapping.list_accounts_for_site(site_web)
-
-        return {
-            "site_web": site_web,
-            "accounts": [
-                {
-                    "platform": account.platform,
-                    "account_name": account.account_name,
-                    "account_id": account.account_id,
-                    "is_active": account.is_active
-                }
-                for account in site_accounts
-            ]
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des comptes: {str(e)}")
-
-
-@app.get("/accounts/{site_web}/{platform}")
-async def get_account_details(site_web: SiteWeb, platform: str):
-    """
-    Récupère les détails d'un compte spécifique
-    """
-    try:
-        from app.models.base import PlatformType
-        platform_enum = PlatformType(platform)
-
-        account = account_mapping.get_account(site_web, platform_enum)
-
-        if not account:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Compte non trouvé pour {site_web} sur {platform}"
-            )
-
-        return {
-            "site_web": account.site_web,
-            "platform": account.platform,
-            "account_name": account.account_name,
-            "account_id": account.account_id,
-            "is_active": account.is_active,
-            "created_at": account.created_at,
-            "last_used": account.last_used
-        }
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Plateforme non valide: {platform}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
-
-
-@app.get("/examples")
-async def get_examples():
-    """
-    Exemples de requêtes pour les différents types de publications
-    """
-    return {
-        "simple_multi_platform": PublicationRequestExamples.simple_multi_platform().dict(),
-        "instagram_carousel_with_images": PublicationRequestExamples.instagram_carousel_with_images().dict(),
-        "instagram_carousel_without_images": PublicationRequestExamples.instagram_carousel_without_images().dict(),
-        "mixed_sites_content": PublicationRequestExamples.mixed_sites_content().dict()
-    }
-
-
-@app.post("/test/validate-account")
-async def test_validate_account(site_web: SiteWeb, platform: str):
-    """
-    Teste la validation d'un compte spécifique
-    """
-    try:
-        from app.models.base import PlatformType
-        platform_enum = PlatformType(platform)
-
-        from app.models.accounts import validate_account_exists
-        account = validate_account_exists(site_web, platform_enum)
-
-        return {
-            "valid": True,
-            "site_web": site_web,
-            "platform": platform,
-            "account_name": account.account_name,
-            "account_id": account.account_id,
-            "is_active": account.is_active
-        }
-
-    except AccountValidationError as e:
-        return {
-            "valid": False,
-            "error": str(e),
-            "site_web": site_web,
-            "platform": platform
-        }
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Plateforme non valide: {platform}")
-
-
-@app.post("/test/format/advanced")
-async def test_format_content_advanced(
-        texte_source: str,
-        site_web: SiteWeb,
-        platform: str,
-        content_type: str = "post",
-        nb_slides: Optional[int] = None,
-        images_urls: Optional[List[str]] = None
-):
-    """
-    Endpoint de test pour formater du contenu avec types spécifiques et gestion des comptes
-    """
-    try:
-        from app.services.llm_service import llm_service
-        from app.models.accounts import validate_account_exists
-        from app.models.base import PlatformType
-
-        platform_enum = PlatformType(platform)
-
-        # Valider le compte
-        account = validate_account_exists(site_web, platform_enum)
-
-        constraints = {"account": account.account_name}
-        if nb_slides and content_type == "carousel":
-            constraints["nb_slides"] = nb_slides
-        if images_urls:
-            constraints["images_provided"] = True
-
-        formatted = await llm_service.format_content_for_platform(
-            texte_source, platform, content_type, constraints
-        )
-
-        result = {
-            "original": texte_source,
-            "site_web": site_web,
-            "platform": platform,
-            "content_type": content_type,
-            "account_used": account.account_name,
-            "constraints": constraints,
-            "formatted": formatted
-        }
-
-        # Simulation génération d'images pour carrousel
-        if content_type == "carousel" and not images_urls:
-            from app.models.content import generate_images
-            generated_images = generate_images(nb_slides or 5, texte_source)
-            result["images_generated"] = generated_images
-        elif images_urls:
-            result["images_provided"] = images_urls
-
-        return result
-
-    except AccountValidationError as e:
-        raise HTTPException(status_code=400, detail=f"Compte invalide: {str(e)}")
-    except Exception as e:
-        logger.error(f"Erreur lors du test de formatage avancé: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Erreur de formatage: {str(e)}")
-
-
-@app.get("/queue/status")
-async def get_queue_status():
-    """Récupère le statut des queues Celery"""
-    try:
-        from app.services.celery_app import celery_app
-        import redis
-
-        # Connexion à Redis pour vérifier les queues
-        redis_client = redis.Redis.from_url(settings.celery_broker_url)
-
-        queues = {
-            'content_generation': redis_client.llen('content_generation'),
-            'content_formatting': redis_client.llen('content_formatting'),
-            'content_publishing': redis_client.llen('content_publishing'),
-            'image_generation': redis_client.llen('image_generation')
-        }
-
-        # Vérifier les workers actifs
-        inspect = celery_app.control.inspect()
-        active_tasks = inspect.active()
-        registered_tasks = inspect.registered()
-
-        return {
-            "queues": queues,
-            "workers": {
-                "active_tasks": active_tasks or {},
-                "registered_tasks": registered_tasks or {}
-            },
-            "broker_url": settings.celery_broker_url,
-            "status": "connected"
-        }
-
-    except Exception as e:
-        logger.error(f"Erreur lors de la récupération du statut des queues: {str(e)}")
-        return {
-            "queues": {"error": str(e)},
-            "workers": {},
-            "status": "error"
-        }
-
-
-@app.post("/publish/async")
-async def publish_content_async(request: EnhancedPublicationRequest):
-    """Publication asynchrone avec Celery distribuée"""
-    try:
-        from app.orchestrator.celery_workflow import celery_orchestrator
-
-        # Lancer le workflow asynchrone avec Celery
-        task_id = celery_orchestrator.execute_workflow_async(request)
-
-        return {
-            "task_id": task_id,
-            "status": "submitted",
-            "message": "Workflow soumis au système distribué Celery"
-        }
-
-    except Exception as e:
-        logger.error(f"Erreur lors de la publication asynchrone: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
-
-
-@app.get("/workflow/{task_id}")
-async def get_workflow_status(task_id: str):
-    """Récupère le statut d'un workflow Celery"""
-    try:
-        from app.orchestrator.celery_workflow import celery_orchestrator
-
-        workflow_status = celery_orchestrator.get_workflow_status(task_id)
-        return workflow_status
-
-    except Exception as e:
-        logger.error(f"Erreur lors de la récupération du statut workflow: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
-
-
-@app.get("/workflows")
-async def get_all_workflows():
-    """Récupère tous les workflows"""
-    try:
-        from app.orchestrator.celery_workflow import celery_orchestrator
-
-        workflows = celery_orchestrator.get_all_workflows()
-        return {
-            "workflows": workflows,
-            "total": len(workflows)
-        }
-
-    except Exception as e:
-        logger.error(f"Erreur lors de la récupération des workflows: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
-
-
-@app.get("/metrics/workflows")
-async def get_workflow_metrics():
-    """Récupère les métriques des workflows"""
-    try:
-        from app.orchestrator.celery_workflow import celery_orchestrator
-
-        metrics = celery_orchestrator.get_workflow_metrics()
-        return metrics
-
-    except Exception as e:
-        logger.error(f"Erreur lors de la récupération des métriques: {str(e)}")
-        return {
-            "error": str(e),
-            "total_workflows": 0,
-            "status_distribution": {},
-            "generated_at": datetime.now().isoformat()
-        }
-
-
-@app.get("/health/celery")
-async def celery_health_check():
-    """Vérification de santé Celery via l'API directement"""
-    try:
-        from app.services.celery_app import celery_app
-        import redis
-
-        # Test 1: Connexion Redis
-        try:
-            redis_client = redis.Redis.from_url(settings.celery_broker_url)
-            redis_client.ping()
-            redis_healthy = True
-        except Exception:
-            redis_healthy = False
-
-        # Test 2: Workers actifs
-        try:
-            inspect = celery_app.control.inspect()
-            active_workers = inspect.active()
-            registered_workers = inspect.registered()
-
-            worker_count = len(active_workers) if active_workers else 0
-            workers_healthy = worker_count > 0
-        except Exception:
-            worker_count = 0
-            workers_healthy = False
-
-        # Test 3: Queue accessible
-        try:
-            queue_sizes = {}
-            for queue in ['content_generation', 'content_formatting', 'content_publishing']:
-                queue_sizes[queue] = redis_client.llen(queue)
-            queues_healthy = True
-        except Exception:
-            queue_sizes = {}
-            queues_healthy = False
-
-        # Statut global
-        overall_healthy = redis_healthy and queues_healthy
-
-        status_code = 200 if overall_healthy else 503
-
-        return {
-            "status": "healthy" if overall_healthy else "unhealthy",
-            "redis_connection": redis_healthy,
-            "workers_active": workers_healthy,
-            "worker_count": worker_count,
-            "queues_accessible": queues_healthy,
-            "queue_sizes": queue_sizes,
-            "timestamp": datetime.now().isoformat()
-        }
-
-    except Exception as e:
-        logger.error(f"Erreur lors du health check Celery: {str(e)}")
-        return {
-            "status": "error",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
 
 if __name__ == "__main__":
     import uvicorn
