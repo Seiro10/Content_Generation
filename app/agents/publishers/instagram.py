@@ -6,6 +6,7 @@ import requests
 import boto3
 import tempfile
 import os
+import uuid
 from datetime import datetime
 
 from app.agents.base_agent import BasePublisher
@@ -17,9 +18,12 @@ from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# 🆕 Store temporaire pour les drafts Instagram (en production, utiliser Redis ou DB)
+instagram_drafts_store = {}
+
 
 class InstagramPublisher(BasePublisher):
-    """Publisher spécialisé pour Instagram avec support S3"""
+    """Publisher spécialisé pour Instagram avec support S3 et drafts simulés"""
 
     def __init__(self):
         super().__init__(PlatformType.INSTAGRAM)
@@ -118,13 +122,20 @@ class InstagramPublisher(BasePublisher):
             formatted_content: any,
             site_web: SiteWeb,
             account: AccountConfig,
-            content_type: ContentType = ContentType.POST
+            content_type: ContentType = ContentType.POST,
+            published: bool = True  # 🆕 Nouveau paramètre
     ) -> dict:
-        """Publie le contenu formaté sur Instagram avec support S3"""
+        """Publie le contenu formaté sur Instagram avec support S3 et drafts"""
 
-        logger.info(f"📸 Publication Instagram {content_type} pour compte: {account.account_name}")
+        logger.info(f"📸 Instagram {content_type} pour compte: {account.account_name}")
+        logger.info(f"📝 Mode: {'Publication' if published else 'Draft simulé'}")
 
         try:
+            # 🆕 Si draft demandé, créer un draft simulé
+            if not published:
+                return self._create_draft_simulation(formatted_content, site_web, account, content_type)
+
+            # Publication normale si published=True
             # Récupérer les credentials Instagram
             creds = get_platform_credentials(site_web, PlatformType.INSTAGRAM)
 
@@ -141,6 +152,90 @@ class InstagramPublisher(BasePublisher):
             error_msg = f"Erreur lors de la publication Instagram: {str(e)}"
             logger.error(f"❌ {error_msg}")
             return self._create_error_result(error_msg)
+
+    def _create_draft_simulation(self, formatted_content, site_web, account, content_type) -> dict:
+        """🆕 Simule un draft Instagram en stockant les données"""
+        draft_id = f"instagram_draft_{content_type}_{uuid.uuid4().hex[:8]}"
+
+        # Stocker le draft avec métadonnées
+        draft_data = {
+            "draft_id": draft_id,
+            "content": formatted_content.dict() if hasattr(formatted_content, 'dict') else formatted_content,
+            "site_web": site_web.value,
+            "account": account.account_name,
+            "content_type": content_type.value,
+            "created_at": datetime.now().isoformat(),
+            "status": "draft",
+            "platform": "instagram"
+        }
+
+        # Stocker dans le store temporaire (en production: Redis/DB)
+        instagram_drafts_store[draft_id] = draft_data
+
+        logger.info(f"📝 Draft Instagram simulé créé: {draft_id}")
+
+        # Préparer l'aperçu du contenu
+        preview_content = self._generate_content_preview(formatted_content, content_type)
+
+        return self._create_success_result(
+            draft_id,
+            f"internal://drafts/instagram/{draft_id}",
+            {
+                "content_preview": preview_content,
+                "published": False,
+                "status_message": f"Draft Instagram {content_type} sauvegardé",
+                "draft_info": {
+                    "platform": "instagram",
+                    "content_type": content_type.value,
+                    "can_edit": True,
+                    "can_publish": True,
+                    "can_delete": True
+                },
+                "note": "Instagram ne supporte pas les drafts natifs - contenu stocké en interne",
+                "actions": {
+                    "publish": f"POST /publish/draft/{draft_id}",
+                    "preview": f"GET /drafts/{draft_id}/preview",
+                    "edit": f"PUT /drafts/{draft_id}",
+                    "delete": f"DELETE /drafts/{draft_id}"
+                },
+                "limitations": [
+                    "Draft simulé - non visible dans l'app Instagram",
+                    "Expiration possible selon la configuration du serveur",
+                    "Pour publication immédiate: utiliser published=true"
+                ]
+            }
+        )
+
+    def _generate_content_preview(self, formatted_content, content_type) -> dict:
+        """🆕 Génère un aperçu du contenu pour le draft"""
+        preview = {"type": content_type.value}
+
+        if content_type == ContentType.POST:
+            preview.update({
+                "caption": formatted_content.legende[:100] + "..." if len(
+                    formatted_content.legende) > 100 else formatted_content.legende,
+                "hashtags": formatted_content.hashtags or [],
+                "has_image": bool(formatted_content.image_s3_url),
+                "image_s3_url": formatted_content.image_s3_url
+            })
+        elif content_type == ContentType.STORY:
+            preview.update({
+                "text": formatted_content.texte_story,
+                "has_image": bool(formatted_content.image_s3_url),
+                "image_s3_url": formatted_content.image_s3_url
+            })
+        elif content_type == ContentType.CAROUSEL:
+            preview.update({
+                "slides_count": len(formatted_content.slides),
+                "slides_preview": formatted_content.slides[:2],  # Première 2 slides
+                "caption": formatted_content.legende[:100] + "..." if len(
+                    formatted_content.legende) > 100 else formatted_content.legende,
+                "hashtags": formatted_content.hashtags or [],
+                "has_images": bool(formatted_content.images_s3_urls or formatted_content.images_urls),
+                "images_count": len(formatted_content.images_s3_urls or formatted_content.images_urls or [])
+            })
+
+        return preview
 
     async def _publish_post(self, content: InstagramPostOutput, creds) -> dict:
         """Publie un post Instagram avec support S3"""
@@ -225,7 +320,8 @@ class InstagramPublisher(BasePublisher):
             {
                 "caption": content.legende,
                 "hashtags": content.hashtags,
-                "image_source": "s3" if content.image_s3_url else "default"
+                "image_source": "s3" if content.image_s3_url else "default",
+                "published": True
             }
         )
 
@@ -299,7 +395,8 @@ class InstagramPublisher(BasePublisher):
             {
                 "text": content.texte_story,
                 "type": "story",
-                "image_source": "s3" if content.image_s3_url else "default"
+                "image_source": "s3" if content.image_s3_url else "default",
+                "published": True
             }
         )
 
@@ -432,9 +529,29 @@ class InstagramPublisher(BasePublisher):
                 "images_count": len(content.images_s3_urls or content.images_urls or []),
                 "hashtags": content.hashtags,
                 "images_generated": content.images_generated,
-                "image_source": "s3" if content.images_s3_urls else "urls" if content.images_urls else "default"
+                "image_source": "s3" if content.images_s3_urls else "urls" if content.images_urls else "default",
+                "published": True
             }
         )
+
+
+# 🆕 Fonctions utilitaires pour les drafts Instagram
+def get_instagram_draft(draft_id: str) -> dict:
+    """Récupère un draft Instagram"""
+    return instagram_drafts_store.get(draft_id)
+
+
+def list_instagram_drafts() -> list:
+    """Liste tous les drafts Instagram"""
+    return list(instagram_drafts_store.values())
+
+
+def delete_instagram_draft(draft_id: str) -> bool:
+    """Supprime un draft Instagram"""
+    if draft_id in instagram_drafts_store:
+        del instagram_drafts_store[draft_id]
+        return True
+    return False
 
 
 # Instance globale

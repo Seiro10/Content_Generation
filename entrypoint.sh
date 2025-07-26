@@ -1,174 +1,173 @@
 #!/bin/bash
-
-# Social Media Publisher - Docker Entrypoint Script
-# This script handles the startup of different service types
+# entrypoint.sh - Social Media Publisher with Intelligent Cropping
 
 set -e
 
-# Colors for logging
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Function to check if SAM checkpoint exists and download if needed
+download_sam_checkpoint() {
+    if [ "$SAM_ENABLED" = "true" ] && [ ! -f "/app/models/sam_checkpoints/sam_vit_b_01ec64.pth" ]; then
+        echo "🤖 SAM enabled but checkpoint not found. Downloading..."
+        mkdir -p /app/models/sam_checkpoints
 
-log_info() {
-    echo -e "${GREEN}[ENTRYPOINT]${NC} $1"
+        if [ "$SAM_MODEL_TYPE" = "vit_l" ]; then
+            echo "📥 Downloading SAM ViT-L checkpoint (1.2GB)..."
+            wget -O /app/models/sam_checkpoints/sam_vit_l_0b3195.pth \
+                https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth || \
+                echo "❌ SAM ViT-L download failed, will use fallback"
+        elif [ "$SAM_MODEL_TYPE" = "vit_h" ]; then
+            echo "📥 Downloading SAM ViT-H checkpoint (2.4GB)..."
+            wget -O /app/models/sam_checkpoints/sam_vit_h_4b8939.pth \
+                https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth || \
+                echo "❌ SAM ViT-H download failed, will use fallback"
+        else
+            echo "📥 Downloading SAM ViT-B checkpoint (358MB)..."
+            wget -O /app/models/sam_checkpoints/sam_vit_b_01ec64.pth \
+                https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth || \
+                echo "❌ SAM ViT-B download failed, will use fallback"
+        fi
+
+        if [ -f "/app/models/sam_checkpoints/sam_vit_b_01ec64.pth" ] ||
+           [ -f "/app/models/sam_checkpoints/sam_vit_l_0b3195.pth" ] ||
+           [ -f "/app/models/sam_checkpoints/sam_vit_h_4b8939.pth" ]; then
+            echo "✅ SAM checkpoint downloaded successfully"
+        else
+            echo "⚠️ SAM checkpoint download failed, using OpenCV-only fallback"
+            export SAM_ENABLED=false
+        fi
+    fi
 }
 
-log_warn() {
-    echo -e "${YELLOW}[ENTRYPOINT]${NC} $1"
+# Function to test crop system
+test_crop_system() {
+    echo "🧪 Testing intelligent crop system..."
+    python -c "
+try:
+    import cv2
+    import numpy as np
+    from PIL import Image
+    print('✅ OpenCV + PIL available')
+
+    try:
+        from segment_anything import sam_model_registry
+        print('✅ SAM available')
+    except ImportError:
+        print('⚠️ SAM not available, using OpenCV fallback')
+
+    from app.services.unified_cropper import unified_cropper
+    status = unified_cropper.get_status()
+    print(f'✅ Unified cropper initialized: {status[\"unified_cropper\"][\"chosen_method\"]}')
+
+except Exception as e:
+    print(f'❌ Crop system test failed: {e}')
+    exit(1)
+"
+    echo "✅ Crop system test passed"
 }
 
-log_error() {
-    echo -e "${RED}[ENTRYPOINT]${NC} $1"
-}
-
-# Function to wait for Redis using Python
+# Wait for dependencies
 wait_for_redis() {
-    log_info "Waiting for Redis to be ready..."
-
-    while ! python3 -c "
-import redis
-import sys
-try:
-    r = redis.Redis(host='social-media-redis', port=6379, db=1, socket_timeout=5, socket_connect_timeout=5)
-    r.ping()
-    print('Redis is ready')
-    sys.exit(0)
-except Exception as e:
-    print(f'Redis not ready: {e}')
-    sys.exit(1)
-" > /dev/null 2>&1; do
-        log_warn "Redis not ready, waiting 2 seconds..."
-        sleep 2
+    echo "⏳ Waiting for Redis..."
+    while ! timeout 1 bash -c "echo > /dev/tcp/social-media-redis/6379" 2>/dev/null; do
+        sleep 1
     done
-
-    log_info "✅ Redis is ready!"
+    echo "✅ Redis is ready"
 }
 
-# Function to wait for PostgreSQL using Python (simplified)
-wait_for_postgres() {
-    log_info "Waiting for PostgreSQL to be ready..."
-
-    # Simple approach - just check if PostgreSQL is accepting connections
-    while ! python3 -c "
-import socket
-import sys
-try:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(5)
-    result = sock.connect_ex(('social-media-db', 5432))
-    sock.close()
-    if result == 0:
-        print('PostgreSQL is ready')
-        sys.exit(0)
-    else:
-        sys.exit(1)
-except Exception as e:
-    print(f'PostgreSQL not ready: {e}')
-    sys.exit(1)
-" > /dev/null 2>&1; do
-        log_warn "PostgreSQL not ready, waiting 2 seconds..."
-        sleep 2
-    done
-
-    log_info "✅ PostgreSQL is ready!"
-}
-
-# Function to run database migrations
-run_migrations() {
-    log_info "Running database migrations..."
-
-    # TODO: Add Alembic migrations when database models are created
-    # alembic upgrade head
-
-    log_info "✅ Database migrations completed!"
-}
-
-# Set Python path
-export PYTHONPATH=/app:$PYTHONPATH
-
-# Create necessary directories
-mkdir -p /app/logs /app/temp /app/data /app/output
-
-# Set permissions
-chown -R appuser:appuser /app/logs /app/temp /app/data /app/output
-
-# Main entrypoint logic
+# Main execution
 case "$1" in
     "api")
-        log_info "🚀 Starting Social Media Publisher API..."
+        echo "🚀 Starting Social Media Publisher API with Intelligent Cropping..."
+        download_sam_checkpoint
         wait_for_redis
-        wait_for_postgres
-        run_migrations
-
-        log_info "Starting FastAPI server on port ${API_PORT:-8090}"
-        exec python -m app.main
+        test_crop_system
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8090 --workers 1
         ;;
 
     "worker-content")
-        log_info "⚙️ Starting Content Generation Worker..."
+        echo "👷 Starting Content Generation Worker..."
         wait_for_redis
-
-        log_info "Starting Celery worker for content generation and formatting"
-        exec celery -A app.services.celery_app.celery_app worker \
+        exec celery -A app.services.celery_app worker \
             --loglevel=info \
-            --queues=content_generation,content_formatting \
-            --concurrency=2 \
+            --queues=content_generation \
             --hostname=content-worker@%h \
-            --without-gossip \
-            --without-mingle \
-            --without-heartbeat
+            --concurrency=2 \
+            --max-tasks-per-child=1000
         ;;
 
     "worker-publishing")
-        log_info "📤 Starting Publishing Worker..."
+        echo "📤 Starting Publishing Worker..."
         wait_for_redis
-
-        log_info "Starting Celery worker for publishing and image generation"
-        exec celery -A app.services.celery_app.celery_app worker \
+        exec celery -A app.services.celery_app worker \
             --loglevel=info \
-            --queues=content_publishing,image_generation \
-            --concurrency=2 \
+            --queues=content_publishing \
             --hostname=publishing-worker@%h \
-            --without-gossip \
-            --without-mingle \
-            --without-heartbeat
+            --concurrency=2 \
+            --max-tasks-per-child=1000
+        ;;
+
+    "worker-image")
+        echo "🎨 Starting Image Processing Worker with Intelligent Cropping..."
+        download_sam_checkpoint
+        wait_for_redis
+        test_crop_system
+        exec celery -A app.services.celery_app worker \
+            --loglevel=info \
+            --queues=image_generation,image_optimization,intelligent_cropping \
+            --hostname=image-worker@%h \
+            --concurrency=1 \
+            --max-tasks-per-child=100 \
+            --pool=threads
+        ;;
+
+    "worker-formatting")
+        echo "✍️ Starting Content Formatting Worker..."
+        wait_for_redis
+        exec celery -A app.services.celery_app worker \
+            --loglevel=info \
+            --queues=content_formatting \
+            --hostname=formatting-worker@%h \
+            --concurrency=2 \
+            --max-tasks-per-child=1000
         ;;
 
     "beat")
-        log_info "⏰ Starting Celery Beat Scheduler..."
+        echo "⏰ Starting Celery Beat Scheduler..."
         wait_for_redis
-
-        log_info "Starting Celery beat scheduler"
-        exec celery -A app.services.celery_app.celery_app beat \
-            --loglevel=info \
-            --schedule=/app/temp/celerybeat-schedule \
-            --pidfile=/app/temp/celerybeat.pid
+        exec celery -A app.services.celery_app beat --loglevel=info
         ;;
 
     "flower")
-        log_info "🌸 Starting Celery Flower Monitoring..."
+        echo "🌸 Starting Flower Monitoring..."
         wait_for_redis
-
-        log_info "Starting Flower monitoring on port 5555"
-        exec celery -A app.services.celery_app.celery_app flower \
+        exec celery -A app.services.celery_app flower \
             --port=5555 \
-            --broker=${CELERY_BROKER_URL} \
-            --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-admin}
+            --basic-auth=admin:admin
         ;;
 
-    "test")
-        log_info "🧪 Running Tests..."
-        wait_for_redis
+    "test-crop")
+        echo "🧪 Running Crop System Tests..."
+        download_sam_checkpoint
+        test_crop_system
+        exec python test_crop_system.py
+        ;;
 
-        log_info "Running test suite"
-        exec python -m pytest tests/ -v
+    "shell")
+        echo "🐚 Starting Interactive Shell..."
+        exec /bin/bash
         ;;
 
     *)
-        log_info "🔧 Running custom command: $@"
-        exec "$@"
+        echo "❌ Unknown command: $1"
+        echo "Available commands:"
+        echo "  api              - Start FastAPI application"
+        echo "  worker-content   - Start content generation worker"
+        echo "  worker-publishing - Start publishing worker"
+        echo "  worker-image     - Start image processing worker (with intelligent cropping)"
+        echo "  worker-formatting - Start content formatting worker"
+        echo "  beat             - Start Celery beat scheduler"
+        echo "  flower           - Start Flower monitoring"
+        echo "  test-crop        - Test intelligent cropping system"
+        echo "  shell            - Interactive shell"
+        exit 1
         ;;
 esac

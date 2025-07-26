@@ -1,3 +1,4 @@
+# Existing dependencies
 aiohappyeyeballs
 aiohttp
 aiosignal
@@ -92,3 +93,7 @@ psycopg2-binary==2.9.9
 alembic==1.13.1
 gunicorn
 python-multipart==0.0.20
+
+# Additional image processing dependencies (installed in Stage 4)
+scikit-image>=0.21.0
+matplotlib>=3.7.0
